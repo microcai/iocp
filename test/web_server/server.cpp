@@ -16,7 +16,7 @@
 #define REQUEST_BUFFER_SIZE 1024
 #define FAIL_CODE -1
 #define BUFFER_N 1024
-#define THREADPOOL_SIZE 10
+#define THREADPOOL_SIZE 111
 
 using namespace std;
 
@@ -209,11 +209,14 @@ public:
 				socklen_t clientSocketSettingLength;
 				clientSocketSettingLength = sizeof(clientSocketSetting);
 				int messageSocket_ = accept(listenSocket->native_handle(), (struct sockaddr*)&clientSocketSetting, &clientSocketSettingLength);
-                SOCKET messageSocket = new SOCKET_emu_class(messageSocket_);
-				ioInformation* ioInfo = new ioInformation(messageSocket);
-				if (CreateIoCompletionPort((HANDLE)messageSocket, eventQueue, (ULONG_PTR)ioInfo, 0) == NULL)
-					errorHandle("IOCP listen");
-				WSARecv(messageSocket, &(ioInfo->wsaBuf),1, &recvBytes, &flags, &(ioInfo->overlapped), NULL);
+				if (messageSocket_ > 0)
+				{
+					SOCKET messageSocket = new SOCKET_emu_class(messageSocket_);
+					ioInformation* ioInfo = new ioInformation(messageSocket);
+					if (CreateIoCompletionPort((HANDLE)messageSocket, eventQueue, (ULONG_PTR)ioInfo, 0) == NULL)
+						errorHandle("IOCP listen");
+					WSARecv(messageSocket, &(ioInfo->wsaBuf),1, &recvBytes, &flags, &(ioInfo->overlapped), NULL);
+				}
 			}
 		}
 	}

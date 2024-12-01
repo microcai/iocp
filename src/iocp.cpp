@@ -16,7 +16,8 @@
 struct iocp_handle_emu_class final : public base_handle
 {
 	io_uring ring_;
-	mutable std::mutex m;
+	mutable std::mutex submit_mutex;
+	mutable std::mutex wait_mutex;
 
 	~iocp_handle_emu_class()
 	{
@@ -26,7 +27,7 @@ struct iocp_handle_emu_class final : public base_handle
 	template<typename PrepareOP>
 	auto submit_io(PrepareOP&& preparer)
 	{
-		std::scoped_lock<std::mutex> l(m);
+		std::scoped_lock<std::mutex> l(submit_mutex);
 		auto sqe = io_uring_get_sqe(&ring_);
 		preparer(sqe);
 		return io_uring_submit(&ring_);
@@ -63,8 +64,9 @@ IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(
 		io_uring_params params = { 0 };
 		params.cq_entries = 65536;
 		params.sq_entries =16384;
-		params.features = IORING_FEAT_NODROP;
+		params.features = IORING_FEAT_NODROP|IORING_FEAT_EXT_ARG;
 		auto result = io_uring_queue_init_params(16384, &ret->ring_, &params);
+		// auto result = io_uring_queue_init(16384, &ret->ring_, 0);
 		ret->_socket_fd = ret->ring_.ring_fd;
 
 		if (result < 0)
@@ -100,6 +102,9 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 
 	while(1)
 	{
+		io_uring_operation_ptr op = nullptr;
+		{
+		std::scoped_lock<std::mutex> l(iocp->wait_mutex);
 
 		auto io_uring_ret = io_uring_wait_cqe_timeout(&iocp->ring_, &cqe, dwMilliseconds == UINT32_MAX ? nullptr : &ts);
 
@@ -111,7 +116,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 		}
 
 		// get LPOVERLAPPED from cqe
-		io_uring_operation_ptr op = reinterpret_cast<io_uring_operation_ptr>(io_uring_cqe_get_data(cqe));
+		op = reinterpret_cast<io_uring_operation_ptr>(io_uring_cqe_get_data(cqe));
 		if (!op)
 		{
 			io_uring_cqe_seen(&iocp->ring_, cqe);
@@ -137,6 +142,8 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 
 		op->do_complete(lpNumberOfBytes);
 		io_uring_cqe_seen(&iocp->ring_, cqe);
+		}
+
 		io_uring_operation_allocator{}.deallocate(op, op->size);
 
 		return true;
@@ -369,7 +376,7 @@ IOCP_DECL int WSARecv(
 
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
 	{
-		io_uring_prep_recvmsg(sqe, s->_socket_fd, &op->msg, 0);
+		io_uring_prep_recvmsg(sqe, s->_socket_fd, &op->msg, IORING_RECVSEND_POLL_FIRST);
 		io_uring_sqe_set_data(sqe, op);
 
 	});

@@ -121,6 +121,7 @@ typedef struct io_uring_operations
 	std::size_t size;
 
 	virtual void do_complete(DWORD* lpNumberOfBytes) {};
+	virtual ~io_uring_operations(){}
 
 }* io_uring_operation_ptr;
 

@@ -50,7 +50,9 @@ IOCP_DECL DWORD WSAWaitForMultipleEvents(
   __in DWORD          dwTimeout,
   __in BOOL           fAlertable)
 {
-    std::vector<pollfd> fds{cEvents};
+    // std::vector<pollfd> fds{cEvents};
+
+     pollfd fds[1];
 
     for (int i = 0; i < cEvents; i ++)
     {
@@ -58,7 +60,7 @@ IOCP_DECL DWORD WSAWaitForMultipleEvents(
         fds[i].events = POLLIN;
     }
 
-    int ready_ = poll(fds.data(), cEvents, dwTimeout);
+    int ready_ = poll(fds, cEvents, dwTimeout);
     if (ready_ > 0)
     {
         for (pollfd& fd : fds)
