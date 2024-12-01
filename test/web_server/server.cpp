@@ -27,7 +27,6 @@ struct accept_info : public OVERLAPPED
 	accept_info()
 	{
 		memset(static_cast<OVERLAPPED*>(this), 0, sizeof (OVERLAPPED));
-		socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, 0);
 	}
 	~accept_info()
 	{
@@ -224,7 +223,8 @@ public:
 
 		for (int i=0; i < 32; i++)
 		{
-			AcceptEx(listenSocket, accept_info_[i].socket, 0, 0, 0, 0, NULL, &accept_info_[i]);
+			accept_info_[i].socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, 0);
+			AcceptEx(listenSocket, accept_info_[i].socket, 0, 0, 0, 0, NULL, &(accept_info_[i]));
 		}
 
 		workerThreadFunction(eventQueue);
@@ -301,6 +301,9 @@ private:
 				if (CreateIoCompletionPort(accept_info_->socket, eventQueue, (ULONG_PTR)ioInfo, 0) == NULL)
 					errorHandle("IOCP listen");
 				WSARecv(accept_info_->socket, &(ioInfo->wsaBuf),1, &recvBytes, &flags, &(ioInfo->overlapped), NULL);
+				accept_info_->socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, 0);
+				AcceptEx(listenSocket, accept_info_->socket, 0, 0, 0, 0, NULL, accept_info_);
+
 				continue;
 			}
 
@@ -319,18 +322,6 @@ private:
 			}
 			delete ioInfo;
 		}
-	}
-	bool waitAcceptEvent() {
-		DWORD ret = WSAWaitForMultipleEvents(1, &acceptEvent, FALSE, WSA_INFINITE, FALSE);
-		if (WSA_WAIT_TIMEOUT == ret || WSA_WAIT_FAILED == ret)
-			return false;
-		WSANETWORKEVENTS events;
-		int nRet = WSAEnumNetworkEvents(listenSocket, acceptEvent, &events);
-		if (nRet == SOCKET_ERROR)
-			return false;
-		if (events.lNetworkEvents & FD_ACCEPT)
-			return true;
-		return false;
 	}
 };
 
