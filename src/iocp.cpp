@@ -235,7 +235,7 @@ IOCP_DECL BOOL AcceptEx(
 		}
 	};
 
-	close(dynamic_cast<SOCKET_emu_class*>(sAcceptSocket) ->_socket_fd);
+	close(sAcceptSocket->native_handle());
 
 	io_uring_accept_op* op = io_uring_operation_allocator{}.allocate<io_uring_accept_op>();
 	op->overlapped_ptr = lpOverlapped;
@@ -376,7 +376,7 @@ IOCP_DECL int WSARecv(
 
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
 	{
-		io_uring_prep_recvmsg(sqe, s->_socket_fd, &op->msg, IORING_RECVSEND_POLL_FIRST);
+		io_uring_prep_recvmsg(sqe, s->_socket_fd, &op->msg, 0);
 		io_uring_sqe_set_data(sqe, op);
 
 	});

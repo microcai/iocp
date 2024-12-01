@@ -20,6 +20,21 @@
 
 using namespace std;
 
+struct accept_info : public OVERLAPPED
+{
+	SOCKET socket;
+
+	accept_info()
+	{
+		memset(static_cast<OVERLAPPED*>(this), 0, sizeof (OVERLAPPED));
+		socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, 0);
+	}
+	~accept_info()
+	{
+		closesocket(socket);
+	}
+};
+
 class ioInformation {
 public:
 	OVERLAPPED overlapped;
@@ -60,7 +75,8 @@ public:
 	}
 #pragma warning(disable: 26495)
 	request(char* buffer, size_t size) {
-		if (messageLength == 0) return;
+		if (size == 0) return;
+		messageLength = size;
 		destructStr(buffer);
 	}
 private:
@@ -200,25 +216,19 @@ public:
 	HANDLE eventQueue, acceptEvent;
 	thread workerThreads[THREADPOOL_SIZE];
 	DWORD recvBytes = 0, flags = 0;
+	accept_info accept_info_[32];
+
 	void start() {
 		printf("Start.......\n");
-		forever
+
+
+		for (int i=0; i < 32; i++)
 		{
-			if (waitAcceptEvent()) {
-				struct sockaddr_in clientSocketSetting;
-				socklen_t clientSocketSettingLength;
-				clientSocketSettingLength = sizeof(clientSocketSetting);
-				int messageSocket_ = accept(listenSocket->native_handle(), (struct sockaddr*)&clientSocketSetting, &clientSocketSettingLength);
-				if (messageSocket_ > 0)
-				{
-					SOCKET messageSocket = new SOCKET_emu_class(messageSocket_);
-					ioInformation* ioInfo = new ioInformation(messageSocket);
-					if (CreateIoCompletionPort((HANDLE)messageSocket, eventQueue, (ULONG_PTR)ioInfo, 0) == NULL)
-						errorHandle("IOCP listen");
-					WSARecv(messageSocket, &(ioInfo->wsaBuf),1, &recvBytes, &flags, &(ioInfo->overlapped), NULL);
-				}
-			}
+			AcceptEx(listenSocket, accept_info_[i].socket, 0, 0, 0, 0, NULL, &accept_info_[i]);
 		}
+
+		workerThreadFunction(eventQueue);
+
 	}
 #pragma warning(disable: 26495)
 	httpServer() {
@@ -283,13 +293,25 @@ private:
 				INFINITE);
 			if (result == 0 || ipNumberOfBytes == 0)
 				continue;
+
+			if (ipCompletionKey == 0)
+			{
+				accept_info* accept_info_ = static_cast<accept_info*>(ipOverlap);
+				ioInformation* ioInfo = new ioInformation(accept_info_->socket);
+				if (CreateIoCompletionPort(accept_info_->socket, eventQueue, (ULONG_PTR)ioInfo, 0) == NULL)
+					errorHandle("IOCP listen");
+				WSARecv(accept_info_->socket, &(ioInfo->wsaBuf),1, &recvBytes, &flags, &(ioInfo->overlapped), NULL);
+				continue;
+			}
+
 			ioInformation* ioInfo = (ioInformation*)ipCompletionKey;
+			ioInfo->wsaBuf.len = ipNumberOfBytes;
 			request req = request(ioInfo->wsaBuf.buf, ioInfo->wsaBuf.len);
 			if (req.requestType < 0) {
 				delete ioInfo;
 				continue;
 			}
-			cout << req.typeName[req.requestType] << " : " << req.filePath << endl;
+			// cout << req.typeName[req.requestType] << " : " << req.filePath << endl;
 			int sentResult = responseClient(req, ioInfo->socket);
 			if (sentResult <= 0) {
 				printf("send error\n");
