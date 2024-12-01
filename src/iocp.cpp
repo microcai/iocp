@@ -96,42 +96,49 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 		.tv_nsec = dwMilliseconds % 1000 * 1000000
 	};
 
-	auto io_uring_ret = io_uring_wait_cqe_timeout(&iocp->ring_, &cqe, dwMilliseconds == UINT32_MAX ? nullptr : &ts);
-
-	if (io_uring_ret < 0)
+	while(1)
 	{
-		// timeout
-		WSASetLastError(-io_uring_ret);
-		return false;
-	}
 
-	// get LPOVERLAPPED from cqe
-	io_uring_operation_ptr op = reinterpret_cast<io_uring_operation_ptr>(io_uring_cqe_get_data(cqe));
-	if (!op)
-	{
+		auto io_uring_ret = io_uring_wait_cqe_timeout(&iocp->ring_, &cqe, dwMilliseconds == UINT32_MAX ? nullptr : &ts);
+
+		if (io_uring_ret < 0)
+		{
+			// timeout
+			WSASetLastError(-io_uring_ret);
+			return false;
+		}
+
+		// get LPOVERLAPPED from cqe
+		io_uring_operation_ptr op = reinterpret_cast<io_uring_operation_ptr>(io_uring_cqe_get_data(cqe));
+		if (!op)
+		{
+			io_uring_cqe_seen(&iocp->ring_, cqe);
+			if (dwMilliseconds == UINT32_MAX)
+				continue;
+			return false;
+		}
+
+		if (lpOverlapped)
+			*lpOverlapped = op->overlapped_ptr;
+		if (lpCompletionKey)
+			*lpCompletionKey = op->CompletionKey;
+		if (lpNumberOfBytes)
+			*lpNumberOfBytes = cqe->res;
+
+		if (cqe->flags & IORING_CQE_F_MORE)
+		{
+			io_uring_cqe_seen(&iocp->ring_, cqe);
+			if (dwMilliseconds == UINT32_MAX)
+				continue;
+			return false;
+		}
+
+		op->do_complete(lpNumberOfBytes);
 		io_uring_cqe_seen(&iocp->ring_, cqe);
-		WSASetLastError(ERROR_IO_PENDING);
-		return false;
+		io_uring_operation_allocator{}.deallocate(op, op->size);
+
+		return true;
 	}
-
-	if (lpOverlapped)
-		*lpOverlapped = op->overlapped_ptr;
-	if (lpCompletionKey)
-		*lpCompletionKey = op->CompletionKey;
-	if (lpNumberOfBytes)
-		*lpNumberOfBytes = cqe->res;
-
-	if (cqe->flags & IORING_CQE_F_MORE)
-	{
-		io_uring_cqe_seen(&iocp->ring_, cqe);
-		return false;
-	}
-
-	op->do_complete(lpNumberOfBytes);
-	io_uring_cqe_seen(&iocp->ring_, cqe);
-	io_uring_operation_allocator{}.deallocate(op, op->size);
-
-	return true;
 }
 
 /** ********************************************************************************** **/
@@ -147,7 +154,7 @@ IOCP_DECL SOCKET WSASocket(
   _In_  DWORD dwFlags)
 {
 	assert(lpProtocolInfo == 0 );
-	assert(dwFlags & WSA_FLAG_OVERLAPPED);
+	// assert(dwFlags & WSA_FLAG_OVERLAPPED);
 
 	if(dwFlags & WSA_FLAG_NO_HANDLE_INHERIT)
 		type |= SOCK_CLOEXEC;
@@ -331,7 +338,7 @@ IOCP_DECL int WSARecv(
 
 	iocp_handle_emu_class * iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
 
-	*lpNumberOfBytesRecvd = 0;
+	// *lpNumberOfBytesRecvd = 0;
 	assert(lpCompletionRoutine == 0);
 	assert(lpOverlapped);
 
