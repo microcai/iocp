@@ -49,27 +49,38 @@ typedef struct sockaddr SOCKADDR;
 typedef struct sockaddr_in SOCKADDR_IN;
 typedef struct sockaddr_in6 SOCKADDR_IN6;
 
-typedef struct SOCKET_emu_class
+typedef struct base_handle
 {
-	int _socket_fd;
 	int ref_count;
-	void* _iocp;
 
-	ULONG_PTR _completion_key;
+	base_handle()
+		: ref_count(1)
+	{}
 
-	SOCKET_emu_class(int fd, void* iocp = nullptr)
-	 	: _socket_fd(fd)
-		, ref_count(1)
-		, _iocp(iocp), _completion_key(0)
-	{
-	}
+	virtual ~base_handle() {}
 
 	void ref(){ ref_count++;}
 
 	void unref();
 
+}* HANDLE, * SOCKET;
 
-}* SOCKET, * HANDLE;
+struct SOCKET_emu_class final : public base_handle
+{
+	base_handle* _iocp;
+	ULONG_PTR _completion_key;
+
+	int _socket_fd;
+
+	SOCKET_emu_class(int fd, base_handle* iocp = nullptr)
+	 	:  _iocp(iocp)
+		, _completion_key(0)
+		, _socket_fd(fd)
+	{
+	}
+
+	virtual ~SOCKET_emu_class() override;
+};
 
 const HANDLE INVALID_HANDLE_VALUE = (HANDLE)-1;
 const SOCKET INVALID_SOCKET = (SOCKET)-1;
@@ -105,6 +116,8 @@ IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(__in HANDLE FileHandle, __in HAND
 											   __in ULONG_PTR CompletionKey, __in DWORD NumberOfConcurrentThreads
 
 );
+
+IOCP_DECL BOOL WINAPI ClouseHandle(__in HANDLE);
 
 IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __out LPDWORD lpNumberOfBytes,
 												__out PULONG_PTR lpCompletionKey, __out LPOVERLAPPED* lpOverlapped,
@@ -181,13 +194,13 @@ template <typename _socket_addr, typename _socklen_t>
 inline int bind(SOCKET s, _socket_addr* a, _socklen_t l)
 {
 	int v = 1;
-	setsockopt(s->_socket_fd, SOL_SOCKET, SO_REUSEPORT, &v, sizeof(v));
-	return ::bind(s->_socket_fd, (struct sockaddr*) a, (socklen_t) l);
+	setsockopt(dynamic_cast<SOCKET_emu_class*>(s)->_socket_fd, SOL_SOCKET, SO_REUSEPORT, &v, sizeof(v));
+	return ::bind(dynamic_cast<SOCKET_emu_class*>(s)->_socket_fd, (struct sockaddr*) a, (socklen_t) l);
 }
 
 inline int listen(SOCKET s, int l)
 {
-	return ::listen(s->_socket_fd, l);
+	return ::listen(dynamic_cast<SOCKET_emu_class*>(s)->_socket_fd, l);
 }
 
 IOCP_DECL int closesocket(SOCKET);

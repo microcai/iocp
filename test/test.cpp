@@ -241,4 +241,5 @@ int main()
 			continue;
 		}
 	}
+	ClouseHandle(comp_port);
 }
