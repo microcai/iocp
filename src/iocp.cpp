@@ -23,20 +23,24 @@ struct iocp_handle_emu_class final : public base_handle
 		io_uring_queue_exit(&ring_);
 	}
 
-	io_uring_sqe* get_sqe()
+	template<typename PrepareOP>
+	auto submit_io(PrepareOP&& preparer)
 	{
 		std::scoped_lock<std::mutex> l(m);
-		return io_uring_get_sqe(&ring_);
+		auto sqe = io_uring_get_sqe(&ring_);
+		preparer(sqe);
+		return io_uring_submit(&ring_);
 	}
 };
 
 SOCKET_emu_class::~SOCKET_emu_class()
 {
 	auto* iocp = reinterpret_cast<iocp_handle_emu_class*>(_iocp);
-	::io_uring_sqe* sqe = iocp->get_sqe();
-	io_uring_prep_close(sqe, _socket_fd);
-	io_uring_sqe_set_data(sqe, nullptr);
-	io_uring_submit(&iocp->ring_);
+	iocp->submit_io([this](io_uring_sqe* sqe)
+	{
+		io_uring_prep_close(sqe, _socket_fd);
+		io_uring_sqe_set_data(sqe, nullptr);
+	});
 }
 
 IOCP_DECL BOOL WINAPI ClouseHandle(__in HANDLE h)
@@ -56,7 +60,11 @@ IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(
 	{
 		iocp_handle_emu_class* ret = new iocp_handle_emu_class{};
 		iocphandle = ret;
-		auto result = io_uring_queue_init(16384, &ret->ring_, 0);
+		io_uring_params params = { 0 };
+		params.cq_entries = 65536;
+		params.sq_entries =16384;
+		params.features = IORING_FEAT_NODROP;
+		auto result = io_uring_queue_init_params(16384, &ret->ring_, &params);
 		if (result < 0)
 		{
 			delete ret;
@@ -81,14 +89,14 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
   __out         LPOVERLAPPED* lpOverlapped,
   __in          DWORD dwMilliseconds)
 {
-	struct io_uring* ring = reinterpret_cast<io_uring*>(CompletionPort);
+	struct iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(CompletionPort);
 	struct io_uring_cqe* cqe = nullptr;
 	struct __kernel_timespec ts = {
 		.tv_sec = dwMilliseconds / 1000,
 		.tv_nsec = dwMilliseconds % 1000 * 1000000
 	};
 
-	auto io_uring_ret = io_uring_wait_cqe_timeout(ring, &cqe, &ts);
+	auto io_uring_ret = io_uring_wait_cqe_timeout(&iocp->ring_, &cqe, dwMilliseconds == UINT32_MAX ? nullptr : &ts);
 
 	if (io_uring_ret < 0)
 	{
@@ -101,7 +109,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 	io_uring_operation_ptr op = reinterpret_cast<io_uring_operation_ptr>(io_uring_cqe_get_data(cqe));
 	if (!op)
 	{
-		io_uring_cqe_seen(ring, cqe);
+		io_uring_cqe_seen(&iocp->ring_, cqe);
 		WSASetLastError(ERROR_IO_PENDING);
 		return false;
 	}
@@ -115,12 +123,12 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 
 	if (cqe->flags & IORING_CQE_F_MORE)
 	{
-		io_uring_cqe_seen(ring, cqe);
+		io_uring_cqe_seen(&iocp->ring_, cqe);
 		return false;
 	}
 
 	op->do_complete(cqe->res);
-	io_uring_cqe_seen(ring, cqe);
+	io_uring_cqe_seen(&iocp->ring_, cqe);
 	io_uring_operation_allocator{}.deallocate(op, op->size);
 
 	return true;
@@ -168,7 +176,6 @@ IOCP_DECL BOOL AcceptEx(
 	}
 
 	iocp_handle_emu_class * iocp = dynamic_cast<iocp_handle_emu_class*>(listen_sock->_iocp);
-	auto ring_ = &(iocp->ring_);
 
 	if (lpOverlapped == nullptr)
 	{
@@ -199,18 +206,19 @@ IOCP_DECL BOOL AcceptEx(
 		}
 	};
 
-	// now, enter IOCP emul logic
-	struct io_uring_sqe* sqe = io_uring_get_sqe(ring_);
+	close(dynamic_cast<SOCKET_emu_class*>(sAcceptSocket) ->_socket_fd);
 
 	io_uring_accept_op* op = io_uring_operation_allocator{}.allocate<io_uring_accept_op>();
-	io_uring_sqe_set_data(sqe, op);
 	op->overlapped_ptr = lpOverlapped;
 	op->accept_into = dynamic_cast<SOCKET_emu_class*>(sAcceptSocket);
 	op->CompletionKey = listen_sock->_completion_key;
-	close(dynamic_cast<SOCKET_emu_class*>(sAcceptSocket) ->_socket_fd);
 
-	io_uring_prep_accept(sqe, listen_sock->_socket_fd, &(op->remote_addr), &(op->remote_addr_len), 0);
-	io_uring_submit(ring_);
+	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	{
+		io_uring_prep_accept(sqe, listen_sock->_socket_fd, &(op->remote_addr), &(op->remote_addr_len), 0);
+		io_uring_sqe_set_data(sqe, op);
+	});
+
 	return true;
 }
 
@@ -233,7 +241,6 @@ IOCP_DECL int WSASend(
 	}
 
 	iocp_handle_emu_class * iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
-	auto ring_ = &(iocp->ring_);
 
 	assert(lpCompletionRoutine == 0);
 	assert(lpOverlapped);
@@ -251,25 +258,24 @@ IOCP_DECL int WSASend(
 	};
 
 	// now, enter IOCP emul logic
-	struct io_uring_sqe* sqe = io_uring_get_sqe(ring_);
-
 	io_uring_write_op* op = io_uring_operation_allocator{}.allocate<io_uring_write_op>();
 	op->overlapped_ptr = lpOverlapped;
 	op->CompletionKey = s->_completion_key;
 	op->msg_iov.resize(dwBufferCount);
 	op->msg.msg_iovlen = dwBufferCount;
 	op->msg.msg_iov = op->msg_iov.data();
-
 	for (int i =0; i < dwBufferCount; i++)
 	{
 		op->msg_iov[i].iov_base = lpBuffers[i].buf;
 		op->msg_iov[i].iov_len = lpBuffers[i].len;
 	}
 
+	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	{
+		io_uring_prep_sendmsg_zc(sqe, s->_socket_fd, &op->msg, 0);
+		io_uring_sqe_set_data(sqe, op);
+	});
 
-	io_uring_prep_sendmsg_zc(sqe, s->_socket_fd, &op->msg, 0);
-	io_uring_sqe_set_data(sqe, op);
-	io_uring_submit(ring_);
 	return true;
 }
 
@@ -291,7 +297,6 @@ IOCP_DECL int WSARecv(
 	}
 
 	iocp_handle_emu_class * iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
-	auto ring_ = &(iocp->ring_);
 
 	*lpNumberOfBytesRecvd = 0;
 	assert(lpCompletionRoutine == 0);
@@ -307,8 +312,6 @@ IOCP_DECL int WSARecv(
 	};
 
 	// now, enter IOCP emul logic
-	struct io_uring_sqe* sqe = io_uring_get_sqe(ring_);
-
 	io_uring_read_op* op = io_uring_operation_allocator{}.allocate<io_uring_read_op>();
 	op->overlapped_ptr = lpOverlapped;
 	op->CompletionKey = s->_completion_key;
@@ -322,9 +325,13 @@ IOCP_DECL int WSARecv(
 		op->msg_iov[i].iov_len = lpBuffers[i].len;
 	}
 
-	io_uring_prep_recvmsg(sqe, s->_socket_fd, &op->msg, 0);
-	io_uring_sqe_set_data(sqe, op);
-	io_uring_submit(ring_);
+	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	{
+		io_uring_prep_recvmsg(sqe, s->_socket_fd, &op->msg, 0);
+		io_uring_sqe_set_data(sqe, op);
+
+	});
+
 	return true;
 }
 
