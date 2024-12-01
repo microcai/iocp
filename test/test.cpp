@@ -252,5 +252,5 @@ int main()
 			continue;
 		}
 	}
-	ClouseHandle(comp_port);
+	CloseHandle(comp_port);
 }

@@ -43,7 +43,7 @@ SOCKET_emu_class::~SOCKET_emu_class()
 	});
 }
 
-IOCP_DECL BOOL WINAPI ClouseHandle(__in HANDLE h)
+IOCP_DECL BOOL WINAPI CloseHandle(__in HANDLE h)
 {
 	h->unref();
 	return true;
@@ -65,6 +65,8 @@ IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(
 		params.sq_entries =16384;
 		params.features = IORING_FEAT_NODROP;
 		auto result = io_uring_queue_init_params(16384, &ret->ring_, &params);
+		ret->_socket_fd = ret->ring_.ring_fd;
+
 		if (result < 0)
 		{
 			delete ret;
@@ -399,6 +401,10 @@ IOCP_DECL int WSAStartup(
 	return 0;
 }
 
+IOCP_DECL int WSACleanup()
+{
+	return 0;
+}
 
 IOCP_DECL DWORD WSASetLastError(DWORD e)
 {

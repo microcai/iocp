@@ -3,6 +3,7 @@
 #define __IOCP__H__
 
 #include <errno.h>
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -10,6 +11,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <error.h>
 
 #define WINAPI
 
@@ -32,6 +34,9 @@
 #define _Inout_
 #endif
 
+#define FALSE false
+#define TRUE true
+
 #ifdef __cplusplus
 #define IOCP_DECL extern "C"
 #else
@@ -51,10 +56,17 @@ typedef struct sockaddr_in6 SOCKADDR_IN6;
 
 typedef struct base_handle
 {
+	int _socket_fd;
 	int ref_count;
 
 	base_handle()
 		: ref_count(1)
+		, _socket_fd(-1)
+	{}
+
+	base_handle(int fd)
+		: ref_count(1)
+		, _socket_fd(fd)
 	{}
 
 	virtual ~base_handle() {}
@@ -63,19 +75,19 @@ typedef struct base_handle
 
 	void unref();
 
-}* HANDLE, * SOCKET;
+	int native_handle() {return _socket_fd; }
+
+}* HANDLE, * SOCKET, * WSAEVENT;
 
 struct SOCKET_emu_class final : public base_handle
 {
 	base_handle* _iocp;
 	ULONG_PTR _completion_key;
 
-	int _socket_fd;
-
 	SOCKET_emu_class(int fd, base_handle* iocp = nullptr)
-	 	:  _iocp(iocp)
+	 	: base_handle(fd)
+		, _iocp(iocp)
 		, _completion_key(0)
-		, _socket_fd(fd)
 	{
 	}
 
@@ -112,12 +124,12 @@ typedef struct io_uring_operations
 
 }* io_uring_operation_ptr;
 
+IOCP_DECL BOOL WINAPI CloseHandle(__in HANDLE);
+
 IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(__in HANDLE FileHandle, __in HANDLE ExistingCompletionPort,
 											   __in ULONG_PTR CompletionKey, __in DWORD NumberOfConcurrentThreads
 
 );
-
-IOCP_DECL BOOL WINAPI ClouseHandle(__in HANDLE);
 
 IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __out LPDWORD lpNumberOfBytes,
 												__out PULONG_PTR lpCompletionKey, __out LPOVERLAPPED* lpOverlapped,
@@ -141,6 +153,8 @@ typedef struct WSAData
 
 IOCP_DECL int WSAStartup(_In_ WORD wVersionRequested, _Out_ LPWSADATA lpWSAData);
 
+IOCP_DECL int WSACleanup();
+
 struct _WSAPROTOCOL_INFO;
 typedef struct _WSAPROTOCOL_INFO* LPWSAPROTOCOL_INFO;
 
@@ -153,6 +167,9 @@ enum
 };
 
 IOCP_DECL SOCKET WSASocket(_In_ int af, _In_ int type, _In_ int protocol, _In_ LPWSAPROTOCOL_INFO lpProtocolInfo,  _In_ SOCKET g, _In_ DWORD dwFlags);
+
+#define WSASocketA WSASocket
+#define WSASocketW WSASocket
 
 IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _In_ PVOID lpOutputBuffer,
 						_In_ DWORD dwReceiveDataLength, _In_ DWORD dwLocalAddressLength,
@@ -190,12 +207,56 @@ IOCP_DECL int WSARecv(_In_ SOCKET s, _Inout_ LPWSABUF lpBuffers, _In_ DWORD dwBu
 					  _In_ LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine // must be NULL
 );
 
-enum
-{
-	ERROR_IO_PENDING = 0xF1,
+
+enum {
+	FD_CONNECT = 0x1,
+	FD_ACCEPT = 0x2,
+	FD_READ = 0x4,
+	FD_WRITE = 0x8,
+
+	FD_MAX_EVENTS = 5,
 };
 
-#define WSA_IO_PENDING ERROR_IO_PENDING
+
+IOCP_DECL WSAEVENT WSACreateEvent();
+
+IOCP_DECL int WSAEventSelect(
+  _In_ SOCKET   s,
+  _In_ WSAEVENT hEventObject,
+  _In_ long     lNetworkEvents
+);
+
+IOCP_DECL DWORD WSAWaitForMultipleEvents(
+  __in DWORD          cEvents,
+  __in const WSAEVENT *lphEvents,
+  __in BOOL           fWaitAll,
+  __in DWORD          dwTimeout,
+  __in BOOL           fAlertable
+);
+
+typedef struct _WSANETWORKEVENTS {
+  long lNetworkEvents;
+  int  iErrorCode[FD_MAX_EVENTS];
+} WSANETWORKEVENTS, *LPWSANETWORKEVENTS;
+
+IOCP_DECL int WSAEnumNetworkEvents(
+  __in  SOCKET             s,
+  __in  WSAEVENT           hEventObject,
+  __out LPWSANETWORKEVENTS lpNetworkEvents
+);
+
+enum
+{
+	WSA_WAIT_FAILED = -2,
+	WSA_WAIT_TIMEOUT = -1,
+	WSA_WAIT_EVENT_0 = 0,
+	WSA_IO_PENDING = 0xF1,
+
+};
+
+#define ERROR_IO_PENDING WSA_IO_PENDING
+
+#define WSA_INFINITE 0xFFFFFFFF
 
 template <typename _socket_addr, typename _socklen_t>
 inline int bind(SOCKET s, _socket_addr* a, _socklen_t l)
