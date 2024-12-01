@@ -127,7 +127,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 		return false;
 	}
 
-	op->do_complete(cqe->res);
+	op->do_complete(lpNumberOfBytes);
 	io_uring_cqe_seen(&iocp->ring_, cqe);
 	io_uring_operation_allocator{}.deallocate(op, op->size);
 
@@ -143,7 +143,7 @@ IOCP_DECL SOCKET WSASocket(
   _In_  int type,
   _In_  int protocol,
   _In_  LPWSAPROTOCOL_INFO lpProtocolInfo,
-  _In_  GROUP g,
+  _In_  SOCKET g,
   _In_  DWORD dwFlags)
 {
 	assert(lpProtocolInfo == 0 );
@@ -197,12 +197,25 @@ IOCP_DECL BOOL AcceptEx(
 
 		PVOID lpOutputBuffer;
 
-		virtual void do_complete(int res) override
+		virtual void do_complete(DWORD* lpNumberOfBytes) override
 		{
-			accept_into->_socket_fd = res;
+			accept_into->_socket_fd = *lpNumberOfBytes;
+
+			getsockname(accept_into->_socket_fd, &local_addr, &local_addr_len);
 
 			// 向 lpOutputBuffer 写入数据，以便 GetAcceptExSockaddrs 解析
-			memcpy(lpOutputBuffer, &remote_addr, sizeof(remote_addr));
+			if (lpOutputBuffer)
+			{
+				// lpOutputBuffer 的结构是
+				// [local_addr_length][local_addr][remote_addr_len][remote_addr]
+				memcpy(lpOutputBuffer, &local_addr_len, 1);
+				memcpy( reinterpret_cast<char*>(lpOutputBuffer) +1, &local_addr, local_addr_len);
+
+				memcpy(reinterpret_cast<char*>(lpOutputBuffer) + 1 + local_addr_len, &remote_addr_len, 1);
+				memcpy( reinterpret_cast<char*>(lpOutputBuffer) + 2 + local_addr_len, &remote_addr, remote_addr_len);
+
+				*lpNumberOfBytes = remote_addr_len + local_addr_len + 2;
+			}
 		}
 	};
 
@@ -212,6 +225,7 @@ IOCP_DECL BOOL AcceptEx(
 	op->overlapped_ptr = lpOverlapped;
 	op->accept_into = dynamic_cast<SOCKET_emu_class*>(sAcceptSocket);
 	op->CompletionKey = listen_sock->_completion_key;
+	op->lpOutputBuffer = lpOutputBuffer;
 
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
 	{
@@ -222,6 +236,26 @@ IOCP_DECL BOOL AcceptEx(
 	return true;
 }
 
+IOCP_DECL void GetAcceptExSockaddrs(
+  __in  PVOID    lpOutputBuffer,
+  __in  DWORD    dwReceiveDataLength,
+  __in  DWORD    dwLocalAddressLength,
+  __in  DWORD    dwRemoteAddressLength,
+  __out sockaddr **LocalSockaddr,
+  __out LPINT    LocalSockaddrLength,
+  __out sockaddr **RemoteSockaddr,
+  __out LPINT    RemoteSockaddrLength)
+{
+	// lpOutputBuffer 的结构是
+	// [local_addr_length][local_addr][remote_addr_len][remote_addr]
+	unsigned char local_addr_length = * reinterpret_cast<unsigned char*>(lpOutputBuffer);
+	*LocalSockaddrLength = local_addr_length;
+	*LocalSockaddr = reinterpret_cast<sockaddr*>( reinterpret_cast<char*>(lpOutputBuffer) + 1 );
+
+	unsigned char remote_addr_length = * (reinterpret_cast<unsigned char*>(lpOutputBuffer) + local_addr_length + 1);
+	*RemoteSockaddrLength = remote_addr_length;
+	*RemoteSockaddr = reinterpret_cast<sockaddr*>( reinterpret_cast<char*>(lpOutputBuffer) + local_addr_length + 2 );
+}
 
 IOCP_DECL int WSASend(
   _In_   SOCKET socket_,
@@ -251,9 +285,8 @@ IOCP_DECL int WSASend(
 	{
 		std::vector<iovec> msg_iov;
 		msghdr msg = {};
-		virtual void do_complete(int res) override
+		virtual void do_complete(DWORD* lpNumberOfBytes) override
 		{
-			std::cerr << "write op \n";
 		}
 	};
 
@@ -306,7 +339,7 @@ IOCP_DECL int WSARecv(
 	{
 		std::vector<iovec> msg_iov;
 		msghdr msg = {};
-		virtual void do_complete(int res) override
+		virtual void do_complete(DWORD* lpNumberOfBytes) override
 		{
 		}
 	};

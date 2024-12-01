@@ -12,23 +12,25 @@
 #define CON_BUFFSIZE 1024
 #define DATA_BUFSIZE 128000
 
-//Events on socket
+// Events on socket
 #define SERVER_ACCEPT 100
 #define SERVER_CLOSE 200
 #define SERVER_READ 300
 #define SERVER_WRITE 400
 
-typedef struct _PER_IO_DATA {
+typedef struct _PER_IO_DATA
+{
 	SOCKET socket;
 	OVERLAPPED overlapped;
 	char data_buff[DATA_BUFSIZE];
 	unsigned int buff_len;
 	int type;
-	char *sdata;
+	char* sdata;
 	unsigned int bytes_read;
 } PER_IO_DATA, *LPPER_IO_DATA;
 
-typedef struct _SOCK_DATA {
+typedef struct _SOCK_DATA
+{
 	SOCKET socket;
 	OVERLAPPED overlapped;
 	char addr_buff[CON_BUFFSIZE];
@@ -115,7 +117,6 @@ int send_data(SOCK_DATA* sock_data, PER_IO_DATA* per_io_data)
 	return 1;
 }
 
-
 int main()
 {
 	// Listening socket
@@ -190,7 +191,7 @@ int main()
 		}
 		else
 		{
-			sock_data = (SOCK_DATA*) comp_key;
+			sock_data = (SOCK_DATA*)comp_key;
 			per_io_data = (PER_IO_DATA*)CONTAINING_RECORD(ovl, PER_IO_DATA, overlapped);
 			type = per_io_data->type;
 		}
@@ -207,8 +208,18 @@ int main()
 		if (type == SERVER_ACCEPT)
 		{
 			printf("New con: %p\n", sock_data->socket);
+
+			LPSOCKADDR local_addr = 0;
+			int local_addr_length = 0;
+			LPSOCKADDR remote_addr = 0;
+			int remote_addr_length = 0;
+			DWORD address_length = sizeof(SOCKADDR);
+
+			GetAcceptExSockaddrs(sock_data->addr_buff, 0, address_length, address_length, &local_addr,
+								 &local_addr_length, &remote_addr, &remote_addr_length);
+
 			accept_con(listener);
-			HANDLE read_port = CreateIoCompletionPort(sock_data->socket, comp_port, (ULONG_PTR) sock_data, 0);
+			HANDLE read_port = CreateIoCompletionPort(sock_data->socket, comp_port, (ULONG_PTR)sock_data, 0);
 			rec_data(sock_data);
 			continue;
 		}
@@ -218,7 +229,7 @@ int main()
 			printf("Received data to %d\n", sock_data->socket);
 
 			per_io_data->bytes_read = bytes_read;
-			char* sdata = (char*) malloc(sizeof(char) * bytes_read + 1);
+			char* sdata = (char*)malloc(sizeof(char) * bytes_read + 1);
 			memcpy_s((void*)sdata, (sizeof(char) * bytes_read + 1), per_io_data->data_buff, bytes_read);
 
 			sdata[bytes_read] = '\0';

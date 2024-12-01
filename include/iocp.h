@@ -45,7 +45,7 @@ typedef uint32_t DWORD, *LPDWORD, *DWORD_PTR;
 typedef bool BOOL; // bool is from stdbool if C99 mode.
 typedef void *PVOID, *LPVOID;
 typedef uint16_t TCHAR;
-typedef struct sockaddr SOCKADDR;
+typedef struct sockaddr SOCKADDR, * LPSOCKADDR;
 typedef struct sockaddr_in SOCKADDR_IN;
 typedef struct sockaddr_in6 SOCKADDR_IN6;
 
@@ -108,7 +108,7 @@ typedef struct io_uring_operations
 	ULONG_PTR CompletionKey;
 	std::size_t size;
 
-	virtual void do_complete(int res) {};
+	virtual void do_complete(DWORD* lpNumberOfBytes) {};
 
 }* io_uring_operation_ptr;
 
@@ -152,17 +152,24 @@ enum
 #define WSA_FLAG_NO_HANDLE_INHERIT WSA_FLAG_NO_HANDLE_INHERIT
 };
 
-IOCP_DECL SOCKET WSASocket(_In_ int af, _In_ int type, _In_ int protocol, _In_ LPWSAPROTOCOL_INFO lpProtocolInfo,
-#define GROUP SOCKET
-						   _In_ GROUP g, _In_ DWORD dwFlags);
-
-struct CONDITIONPROC;
-typedef struct CONDITIONPROC* LPCONDITIONPROC;
+IOCP_DECL SOCKET WSASocket(_In_ int af, _In_ int type, _In_ int protocol, _In_ LPWSAPROTOCOL_INFO lpProtocolInfo,  _In_ SOCKET g, _In_ DWORD dwFlags);
 
 IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _In_ PVOID lpOutputBuffer,
 						_In_ DWORD dwReceiveDataLength, _In_ DWORD dwLocalAddressLength,
 						_In_ DWORD dwRemoteAddressLength, _Out_ LPDWORD lpdwBytesReceived,
 						_In_ LPOVERLAPPED lpOverlapped);
+
+
+IOCP_DECL void GetAcceptExSockaddrs(
+  __in  PVOID    lpOutputBuffer,
+  __in  DWORD    dwReceiveDataLength,
+  __in  DWORD    dwLocalAddressLength,
+  __in  DWORD    dwRemoteAddressLength,
+  __out sockaddr **LocalSockaddr,
+  __out LPINT    LocalSockaddrLength,
+  __out sockaddr **RemoteSockaddr,
+  __out LPINT    RemoteSockaddrLength
+);
 
 typedef struct __WSABUF
 {
