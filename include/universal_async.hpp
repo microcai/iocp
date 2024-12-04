@@ -3,7 +3,6 @@
 
 #include "awaitable.hpp"
 
-
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -19,9 +18,17 @@
 struct awaitable_overlapped : public OVERLAPPED
 {
     std::mutex m;
-    DWORD NumberOfBytes = 0;
-    std::coroutine_handle<> coro_handle = nullptr;
-    bool completed = false;
+    DWORD NumberOfBytes;
+    std::coroutine_handle<> coro_handle;
+    bool completed;
+
+    awaitable_overlapped()
+    {
+        memset(static_cast<OVERLAPPED*>(this), 0, sizeof (OVERLAPPED));
+        NumberOfBytes = 0;
+        coro_handle = nullptr;
+        completed = false;
+    }
 };
 
 struct OverlappedAwaiter
@@ -74,14 +81,14 @@ inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes)
     ov->NumberOfBytes = NumberOfBytes;
     ov->completed = true;
 
-    if ( ov->coro_handle )
+    if ( ov->coro_handle == nullptr)
     {
         ov->m.unlock();
-        ov->coro_handle.resume();
     }
     else
     {
         ov->m.unlock();
+        ov->coro_handle.resume();
     }
 }
 
@@ -100,7 +107,10 @@ inline void run_event_loop(HANDLE iocp_handle)
                     &ipOverlap,
                     INFINITE);
         if (result == 0)
+        {
+            auto err = GetLastError();
             continue;
+        }
 
         if (ipOverlap)
             process_overlapped_event(ipOverlap, NumberOfBytes);
