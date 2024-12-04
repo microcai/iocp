@@ -50,7 +50,7 @@ ucoro::awaitable<void> accept_coro(SOCKET slisten, HANDLE iocp)
 		int local_addr_length = 0;
 		LPSOCKADDR remote_addr = 0;
 		int remote_addr_length = 0;
-		DWORD address_length = sizeof(SOCKADDR);
+		DWORD address_length = sizeof(sockaddr_in6) + 16 ;
 
 		GetAcceptExSockaddrs(addr_buff, 0, address_length, address_length, &local_addr,
 								&local_addr_length, &remote_addr, &remote_addr_length);
