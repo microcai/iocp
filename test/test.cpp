@@ -12,19 +12,21 @@ ucoro::awaitable<void> echo_sever_client_session(SOCKET client_socket)
 {
 	char buf[CON_BUFFSIZE];
 
-	WSABUF wsa_buf;
-	wsa_buf.len = sizeof(buf);
-	wsa_buf.buf = buf;
+	WSABUF wsa_buf[2];
+	wsa_buf[1].len = sizeof(buf);
+	wsa_buf[1].buf = buf;
 
 	DWORD flags = 0, bytes_read;
 
 	awaitable_overlapped ov;
 
-	WSARecv(client_socket, &wsa_buf, 1, &bytes_read, &flags, &ov, NULL);
+	WSARecv(client_socket, &wsa_buf[1], 1, &bytes_read, &flags, &ov, NULL);
 	bytes_read = co_await wait_overlapped(ov);
 
-	wsa_buf.len = bytes_read;
-	WSASend(client_socket, &wsa_buf, 1, NULL, 0, &ov, NULL);
+	wsa_buf[1].len = bytes_read;
+	wsa_buf[0].buf = (char*)"HTTP/1.1 200 OK\r\n\r\n";
+	wsa_buf[0].len = 19;
+	WSASend(client_socket, wsa_buf, 2, NULL, 0, &ov, NULL);
 	co_await wait_overlapped(ov);
 
 	closesocket(client_socket);
