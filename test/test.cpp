@@ -4,7 +4,6 @@
 #include "universal_async.hpp"
 
 #include <stdio.h>
-#include <winsock.h>
 
 #define PORT 50001
 #define CON_BUFFSIZE 1024
@@ -39,9 +38,10 @@ ucoro::awaitable<void> accept_coro(SOCKET slisten, HANDLE iocp)
 	{
 		SOCKET client_socket = WSASocket(AF_INET6, SOCK_STREAM, 0, 0, 0, WSA_FLAG_OVERLAPPED);
 		awaitable_overlapped ov;
+		DWORD ignore = 0;
 
-		AcceptEx(slisten, client_socket, addr_buff, sizeof addr_buff, sizeof (sockaddr_in6), sizeof (sockaddr_in6), NULL, &ov);
-		// wait for overlapped.
+		AcceptEx(slisten, client_socket, addr_buff, 0, sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &ignore, &ov);
+
 		co_await wait_overlapped(ov);
 
 		printf("New con: %p\n", client_socket);
@@ -67,7 +67,7 @@ int main()
 	SOCKET listener;
 
 	// Addr of listening socket
-	SOCKADDR_IN addr;
+	SOCKADDR_IN6 addr = {0};
 
 	// meeeeehhhh
 	WSADATA wsaData;
@@ -79,12 +79,9 @@ int main()
 		exit(1);
 	}
 
-	// Create a completion port
-	HANDLE comp_port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
-
 	// Create listening socket and
 	// put it in overlapped mode - WSA_FLAG_OVERLAPPED
-	listener = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+	listener = WSASocket(AF_INET6, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 	if (listener == INVALID_SOCKET)
 	{
 		printf("Socket creation failed: %d\n", WSAGetLastError());
@@ -92,9 +89,8 @@ int main()
 
 	// Setup address and port of
 	// listening socket
-	addr.sin_family = AF_INET;
-	addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	addr.sin_port = htons(PORT);
+	addr.sin6_family = AF_INET6;
+	addr.sin6_port = htons(PORT);
 
 	// Bind listener to address and port
 	if (bind(listener, (sockaddr*) &addr, sizeof(addr)) == SOCKET_ERROR)
@@ -107,7 +103,7 @@ int main()
 
 	// Completion port for newly accepted sockets
 	// Link it to the main completion port
-	HANDLE sock_port = CreateIoCompletionPort((HANDLE)(listener), comp_port, 0, 0);
+	HANDLE comp_port = CreateIoCompletionPort((HANDLE)(listener), NULL, 0, 1);
 
 	printf("Listening on %d\n", PORT);
 
