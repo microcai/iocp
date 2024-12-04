@@ -5,9 +5,9 @@
 
 typedef struct io_uring_operations
 {
-	LPOVERLAPPED overlapped_ptr;
-	ULONG_PTR CompletionKey;
-	std::size_t size;
+	LPOVERLAPPED overlapped_ptr = 0;
+	ULONG_PTR CompletionKey = 0;
+	std::size_t size = 0;
 
 	virtual void do_complete(DWORD* lpNumberOfBytes) {};
 	virtual ~io_uring_operations(){}

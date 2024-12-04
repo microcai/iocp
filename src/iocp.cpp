@@ -70,7 +70,7 @@ struct iocp_handle_emu_class final : public base_handle
 			sqe = io_uring_get_sqe(&ring_);
 		}
 		preparer(sqe);
-		// return io_uring_submit(&ring_);
+		return io_uring_submit(&ring_);
 	}
 };
 
@@ -138,9 +138,10 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 		io_uring_operation_ptr op = nullptr;
 		{
 			std::scoped_lock<nullable_mutex> l(iocp->wait_mutex);
+			auto io_uring_ret = io_uring_wait_cqe_timeout(&iocp->ring_, &cqe, dwMilliseconds == UINT32_MAX ? nullptr : &ts);
 
-			auto io_uring_ret =
-				io_uring_submit_and_wait_timeout(&iocp->ring_, &cqe, 1,  dwMilliseconds == UINT32_MAX ? nullptr : &ts, nullptr);
+			// auto io_uring_ret =
+			// 	io_uring_submit_and_wait_timeout(&iocp->ring_, &cqe, 1,  dwMilliseconds == UINT32_MAX ? nullptr : &ts, nullptr);
 
 			if (io_uring_ret < 0)
 			{
@@ -168,6 +169,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 				{
 					continue;
 				}
+				WSASetLastError(ERROR_WAIT_TIMEOUT);
 				return false;
 			}
 
@@ -186,13 +188,19 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 
 			if (uring_unlikely(cqe->flags & IORING_CQE_F_MORE))
 			{
-				op->do_complete(lpNumberOfBytes);
-				io_uring_cqe_seen(&iocp->ring_, cqe);
-				if (dwMilliseconds == UINT32_MAX)
+				if(cqe->res < 0)
 				{
-					continue;
+					if (cqe->res == -EOF)
+					{
+						WSASetLastError(ERROR_HANDLE_EOF);
+					}
 				}
-				return false;
+				else
+				{
+					op->do_complete(lpNumberOfBytes);
+				}
+				io_uring_cqe_seen(&iocp->ring_, cqe);
+				continue;
 			}
 			else if (uring_unlikely(cqe->flags & IORING_CQE_F_NOTIF))
 			{
