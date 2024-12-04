@@ -1,5 +1,6 @@
 
 
+// #define __SINGAL_THREADED 1
 
 #include "universal_async.hpp"
 
@@ -46,7 +47,7 @@ ucoro::awaitable<void> accept_coro(SOCKET slisten, HANDLE iocp)
 
 		co_await wait_overlapped(ov);
 
-		printf("New con: %p\n", client_socket);
+		// printf("New con: %p\n", client_socket);
 
 		LPSOCKADDR local_addr = 0;
 		int local_addr_length = 0;
@@ -94,6 +95,11 @@ int main()
 	addr.sin6_family = AF_INET6;
 	addr.sin6_port = htons(PORT);
 
+	{
+		int v = 1;
+		setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &v, sizeof (v));
+	}
+
 	// Bind listener to address and port
 	if (bind(listener, (sockaddr*) &addr, sizeof(addr)) == SOCKET_ERROR)
 	{
@@ -110,56 +116,8 @@ int main()
 	printf("Listening on %d\n", PORT);
 
 	// 开 4个 acceptor
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-
-
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
-	accept_coro(listener, comp_port).detach();
+	for (int i = 0; i < 32; i++)
+		accept_coro(listener, comp_port).detach();
 
 	// 进入 event loop
 	run_event_loop(comp_port);

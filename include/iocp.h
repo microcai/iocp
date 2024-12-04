@@ -220,6 +220,7 @@ int bind(SOCKET, SOCKADDR_IN*, int);
 int bind(SOCKET, SOCKADDR*, int);
 
 int listen(SOCKET, int);
+int setsockopt(SOCKET, int __level, int __optname, const void *__optval, socklen_t __optlen);
 
 #define ZeroMemory(a, b) memset(a, 0, b)
 #define GetLastError() errno

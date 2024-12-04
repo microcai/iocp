@@ -18,6 +18,8 @@
 #include "io_uring_operation_allocator.hpp"
 
 
+namespace {
+
 struct nullable_mutex
 {
 	std::optional<std::mutex> m;
@@ -36,11 +38,12 @@ struct nullable_mutex
 
 	nullable_mutex(int thread_hint)
 	{
-		if (thread_hint > 1)
+		if (thread_hint != 1)
 			m.emplace();
 	}
 
 };
+}
 
 struct iocp_handle_emu_class final : public base_handle
 {
@@ -60,9 +63,14 @@ struct iocp_handle_emu_class final : public base_handle
 	template<typename PrepareOP> auto submit_io(PrepareOP&& preparer)
 	{
 		std::scoped_lock<nullable_mutex> l(submit_mutex);
-		auto sqe = io_uring_get_sqe(&ring_);
+		io_uring_sqe * sqe = io_uring_get_sqe(&ring_);
+		while (!sqe)
+		{
+			io_uring_submit(&ring_);
+			sqe = io_uring_get_sqe(&ring_);
+		}
 		preparer(sqe);
-		return io_uring_submit(&ring_);
+		// return io_uring_submit(&ring_);
 	}
 };
 
@@ -93,10 +101,10 @@ IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(__in HANDLE FileHandle, __in HAND
 		io_uring_params params = {0};
 		params.flags = IORING_SETUP_CQSIZE;
 		params.cq_entries = 65536;
-		params.sq_entries = 2;
+		params.sq_entries = 128;
 		// params.features = IORING_FEAT_EXT_ARG;
 		params.features = IORING_FEAT_NODROP | IORING_FEAT_EXT_ARG | IORING_FEAT_FAST_POLL | IORING_FEAT_RW_CUR_POS;
-		auto result = io_uring_queue_init_params(2, &ret->ring_, &params);
+		auto result = io_uring_queue_init_params(128, &ret->ring_, &params);
 		// auto result = io_uring_queue_init(16384, &ret->ring_, 0);
 		ret->_socket_fd = ret->ring_.ring_fd;
 
@@ -132,7 +140,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 			std::scoped_lock<nullable_mutex> l(iocp->wait_mutex);
 
 			auto io_uring_ret =
-				io_uring_wait_cqe_timeout(&iocp->ring_, &cqe, dwMilliseconds == UINT32_MAX ? nullptr : &ts);
+				io_uring_submit_and_wait_timeout(&iocp->ring_, &cqe, 1,  dwMilliseconds == UINT32_MAX ? nullptr : &ts, nullptr);
 
 			if (io_uring_ret < 0)
 			{
@@ -445,6 +453,11 @@ int bind(SOCKET s, SOCKADDR* a, int l)
 int listen(SOCKET s, int l)
 {
 	return ::listen(s->native_handle(), l);
+}
+
+int setsockopt(SOCKET __fd, int __level, int __optname, const void *__optval, socklen_t __optlen)
+{
+	return ::setsockopt(__fd->native_handle(), __level, __optname, __optval, __optlen);
 }
 
 /** ********************************************************************************** **/

@@ -15,61 +15,86 @@
 #endif
 
 #include <mutex>
+#include <optional>
 
-struct awaitable_overlapped : public OVERLAPPED
+struct dummy_mutex
 {
-    std::mutex m;
+	constexpr void lock() noexcept
+	{
+	}
+
+	constexpr void unlock() noexcept
+	{
+	}
+};
+
+template <typename MUTEX>
+struct basic_awaitable_overlapped : public OVERLAPPED
+{
+    MUTEX m;
     DWORD NumberOfBytes;
     std::coroutine_handle<> coro_handle;
     bool completed;
 
-    awaitable_overlapped()
+    void reset()
     {
         memset(static_cast<OVERLAPPED*>(this), 0, sizeof (OVERLAPPED));
         NumberOfBytes = 0;
         coro_handle = nullptr;
         completed = false;
     }
+
+    basic_awaitable_overlapped()
+    {
+        reset();
+    }
 };
 
-struct OverlappedAwaiter
+template <typename MUTEX>
+struct BasicOverlappedAwaiter
 {
-    OverlappedAwaiter(const OverlappedAwaiter&) = delete;
-    OverlappedAwaiter& operator = (const OverlappedAwaiter&) = delete;
-    awaitable_overlapped& ov;
+    BasicOverlappedAwaiter(const BasicOverlappedAwaiter&) = delete;
+    BasicOverlappedAwaiter& operator = (const BasicOverlappedAwaiter&) = delete;
+    basic_awaitable_overlapped<MUTEX>& ov;
 public:
-    OverlappedAwaiter(OverlappedAwaiter&&) = default;
+    BasicOverlappedAwaiter(BasicOverlappedAwaiter&&) = default;
 
-    explicit OverlappedAwaiter(awaitable_overlapped& ov)
+    explicit BasicOverlappedAwaiter(basic_awaitable_overlapped<MUTEX>& ov)
         : ov(ov)
     {
     }
 
     bool await_ready() noexcept
     {
-        std::scoped_lock<std::mutex> l(ov.m);
+        std::scoped_lock<MUTEX> l(ov.m);
         return ov.completed;
     }
 
     void await_suspend(std::coroutine_handle<> handle)
     {
-        std::scoped_lock<std::mutex> l(ov.m);
+        std::scoped_lock<MUTEX> l(ov.m);
         ov.coro_handle = handle;
     }
 
     DWORD await_resume()
     {
-        std::scoped_lock<std::mutex> l(ov.m);
-        ov.completed = false;
-        ov.coro_handle = nullptr;
-        return ov.NumberOfBytes;
+        std::scoped_lock<MUTEX> l(ov.m);
+        auto NumberOfBytes = ov.NumberOfBytes;
+        ov.reset();
+        return NumberOfBytes;
     }
 };
+
+#ifdef __SINGAL_THREADED
+using awaitable_overlapped = basic_awaitable_overlapped<dummy_mutex>;
+#else
+using awaitable_overlapped = basic_awaitable_overlapped<std::mutex>;
+#endif
 
 // wait for overlapped to became complete. return NumberOfBytes
 inline ucoro::awaitable<DWORD> wait_overlapped(awaitable_overlapped& ov)
 {
-    co_return co_await OverlappedAwaiter{ov};
+    co_return co_await BasicOverlappedAwaiter{ov};
 }
 
 // call this after GetQueuedCompletionStatus.
