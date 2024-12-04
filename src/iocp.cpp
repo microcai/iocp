@@ -299,7 +299,8 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 		io_uring_sqe_set_data(sqe, op);
 	});
 
-	return true;
+	WSASetLastError(ERROR_IO_PENDING);
+	return false;
 }
 
 IOCP_DECL void GetAcceptExSockaddrs(__in PVOID lpOutputBuffer, __in DWORD dwReceiveDataLength,
@@ -367,7 +368,8 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 		io_uring_sqe_set_data(sqe, op);
 	});
 
-	return true;
+	WSASetLastError(ERROR_IO_PENDING);
+	return false;
 }
 
 IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWORD dwBufferCount,
@@ -418,7 +420,8 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 		io_uring_sqe_set_data(sqe, op);
 	});
 
-	return true;
+	WSASetLastError(ERROR_IO_PENDING);
+	return false;
 }
 
 void base_handle::unref()
