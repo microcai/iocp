@@ -2,9 +2,9 @@
 
 
 #include "universal_async.hpp"
-#include "iocp.h"
 
 #include <stdio.h>
+#include <winsock.h>
 
 #define PORT 50001
 #define CON_BUFFSIZE 1024
@@ -17,7 +17,7 @@ ucoro::awaitable<void> echo_sever_client_session(SOCKET client_socket)
 	wsa_buf.len = sizeof(buf);
 	wsa_buf.buf = buf;
 
-	unsigned int flags = 0, bytes_read;
+	DWORD flags = 0, bytes_read;
 
 	awaitable_overlapped ov;
 
@@ -55,7 +55,7 @@ ucoro::awaitable<void> accept_coro(SOCKET slisten, HANDLE iocp)
 		GetAcceptExSockaddrs(addr_buff, 0, address_length, address_length, &local_addr,
 								&local_addr_length, &remote_addr, &remote_addr_length);
 
-		HANDLE read_port = CreateIoCompletionPort(client_socket, iocp, 0, 0);
+		HANDLE read_port = CreateIoCompletionPort((HANDLE)(client_socket), iocp, 0, 0);
 
 		echo_sever_client_session(client_socket).detach();
 	}
@@ -97,7 +97,7 @@ int main()
 	addr.sin_port = htons(PORT);
 
 	// Bind listener to address and port
-	if (bind(listener, &addr, sizeof(addr)) == SOCKET_ERROR)
+	if (bind(listener, (sockaddr*) &addr, sizeof(addr)) == SOCKET_ERROR)
 	{
 		puts("Socket binding failed");
 	}
@@ -107,7 +107,7 @@ int main()
 
 	// Completion port for newly accepted sockets
 	// Link it to the main completion port
-	HANDLE sock_port = CreateIoCompletionPort(listener, comp_port, 0, 0);
+	HANDLE sock_port = CreateIoCompletionPort((HANDLE)(listener), comp_port, 0, 0);
 
 	printf("Listening on %d\n", PORT);
 

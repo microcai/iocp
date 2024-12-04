@@ -7,8 +7,20 @@
 #include <thread>
 #include <time.h>
 
-#include "iocp.h"
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <mswsock.h>
+#include <winbase.h>
 
+#define SOCKET_get_fd(s) (s)
+#define MSG_NOSIGNAL 0
+#define getcwd(a,b) GetCurrentDirectory(b,a)
+#else
+#include "iocp.h"
+#endif
 
 #define forever while(true)
 #define DEFAULT_ERROR_404 "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
@@ -285,7 +297,7 @@ private:
 			{
 				accept_info* accept_info_ = static_cast<accept_info*>(ipOverlap);
 				ioInformation* ioInfo = new ioInformation(accept_info_->socket);
-				if (CreateIoCompletionPort(accept_info_->socket, eventQueue, (ULONG_PTR)ioInfo, 0) == NULL)
+				if (CreateIoCompletionPort((HANDLE)(accept_info_->socket), eventQueue, (ULONG_PTR)ioInfo, 0) == NULL)
 					errorHandle("IOCP listen");
 				WSARecv(accept_info_->socket, &(ioInfo->wsaBuf),1, &recvBytes, &flags, &(ioInfo->overlapped), NULL);
 				accept_info_->socket = WSASocket(2,1,0,0,0,0);
