@@ -5,6 +5,8 @@
 #include <vector>
 #include <optional>
 
+#include <stdlib.h>
+
 #include <assert.h>
 #include <errno.h>
 #include <sys/socket.h>
@@ -358,6 +360,61 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 	return false;
 }
 
+IOCP_DECL BOOL WSAConnectEx(
+  __in            SOCKET socket_,
+  __in            const sockaddr *name,
+  __in            int namelen,
+  _In_opt_        PVOID lpSendBuffer,
+  __in            DWORD dwSendDataLength,
+  __out           LPDWORD lpdwBytesSent,
+  __in            LPOVERLAPPED lpOverlapped)
+{
+	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(socket_);
+
+	if (s->_iocp == nullptr && lpOverlapped)
+	{
+		WSASetLastError(EOPNOTSUPP);
+		return false;
+	}
+
+	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
+
+	assert(lpOverlapped);
+
+	struct io_uring_connect_op : io_uring_operations
+	{
+		PVOID lpSendBuffer;
+		DWORD dwSendDataLength;
+		SOCKET s;
+
+		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		{
+			if (lpSendBuffer && dwSendDataLength)
+			{
+				auto send_bytes = send(s->native_handle(), lpSendBuffer, dwSendDataLength, MSG_NOSIGNAL|MSG_DONTWAIT);
+				if (lpNumberOfBytes && send_bytes > 0)
+					* lpNumberOfBytes = send_bytes;
+			}
+		}
+	};
+
+	// now, enter IOCP emul logic
+	io_uring_connect_op* op = io_uring_operation_allocator{}.allocate<io_uring_connect_op>();
+	op->overlapped_ptr = lpOverlapped;
+	op->CompletionKey = s->_completion_key;
+	op->lpSendBuffer = lpSendBuffer;
+	op->dwSendDataLength = dwSendDataLength;
+
+	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	{
+		io_uring_prep_connect(sqe, s->_socket_fd, name, namelen);
+		io_uring_sqe_set_data(sqe, op);
+	});
+
+	WSASetLastError(ERROR_IO_PENDING);
+	return false;
+}
+
 IOCP_DECL void GetAcceptExSockaddrs(__in PVOID lpOutputBuffer, __in DWORD dwReceiveDataLength,
 									__in DWORD dwLocalAddressLength, __in DWORD dwRemoteAddressLength,
 									__out sockaddr** LocalSockaddr, __out LPINT LocalSockaddrLength,
@@ -541,3 +598,165 @@ IOCP_DECL DWORD WSAGetLastError()
 {
 	return errno;
 }
+
+/***********************************************************************************
+* Overlapped File IO
+************************************************************************************/
+
+IOCP_DECL HANDLE CreateFileA(
+  __in            LPCSTR                lpFileName,
+  __in            DWORD                 dwDesiredAccess,
+  __in            DWORD                 dwShareMode,
+  _In_opt_        LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  __in            DWORD                 dwCreationDisposition,
+  __in            DWORD                 dwFlagsAndAttributes,
+  _In_opt_        HANDLE                hTemplateFile
+)
+{
+	assert(dwFlagsAndAttributes & WSA_FLAG_OVERLAPPED);
+
+	int oflag = 0;
+	int mode = 0644;
+	if (dwDesiredAccess & GENERIC_READ)
+	{
+		oflag |= O_RDONLY;
+	}
+	if (dwDesiredAccess & GENERIC_WRITE)
+	{
+		oflag |= O_WRONLY;
+	}
+
+	if (dwDesiredAccess & GENERIC_EXECUTE)
+	{
+		mode = 0755;
+	}
+
+	int fd = - 1;
+
+	switch (dwCreationDisposition)
+	{
+		case CREATE_NEW:
+			oflag |= O_EXCL;
+		case OPEN_ALWAYS:
+			oflag |= O_CREAT;
+		case OPEN_EXISTING:
+			fd = open(lpFileName, oflag, mode );
+			break;
+		case TRUNCATE_EXISTING:
+			oflag |= O_TRUNC;
+		case CREATE_ALWAYS:
+			oflag |= O_CREAT;
+			fd = open(lpFileName, oflag, mode );
+			if (fd >= 0)
+				ftruncate(fd, 0);
+			break;
+	}
+
+	if (fd >= 0)
+		return new SOCKET_emu_class(fd);
+	return INVALID_HANDLE_VALUE;
+}
+
+IOCP_DECL HANDLE CreateFileW(
+  __in            LPCWSTR               lpFileName,
+  __in            DWORD                 dwDesiredAccess,
+  __in            DWORD                 dwShareMode,
+  _In_opt_        LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  __in            DWORD                 dwCreationDisposition,
+  __in            DWORD                 dwFlagsAndAttributes,
+  _In_opt_        HANDLE                hTemplateFile)
+{
+	// convert wstring back to string
+	auto filename_length = wcslen(lpFileName);
+	std::string utf8_str;
+	utf8_str.resize(filename_length*3);
+	auto filename_utf8_len = wcstombs(utf8_str.data(), lpFileName, filename_length);
+	utf8_str.resize(filename_utf8_len);
+
+	return CreateFileA(utf8_str.c_str(), dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+}
+
+IOCP_DECL BOOL ReadFile(
+  __in                HANDLE       hFile,
+  __out               LPVOID       lpBuffer,
+  __in                DWORD        nNumberOfBytesToRead,
+  _Out_opt_	          LPDWORD      lpNumberOfBytesRead,
+  _Inout_             LPOVERLAPPED lpOverlapped)
+{
+	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(hFile);
+
+	if (s->_iocp == nullptr && lpOverlapped)
+	{
+		WSASetLastError(EOPNOTSUPP);
+		return false;
+	}
+
+	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
+
+	// *lpNumberOfBytesRecvd = 0;
+	assert(lpOverlapped);
+
+	struct io_uring_readfile_op : io_uring_operations
+	{
+		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		{
+		}
+	};
+
+	// now, enter IOCP emul logic
+	io_uring_readfile_op* op = io_uring_operation_allocator{}.allocate<io_uring_readfile_op>();
+	op->overlapped_ptr = lpOverlapped;
+	op->CompletionKey = s->_completion_key;
+
+	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	{
+		io_uring_prep_read(sqe, s->native_handle(), lpBuffer, nNumberOfBytesToRead, -1);
+		io_uring_sqe_set_data(sqe, op);
+	});
+
+	WSASetLastError(ERROR_IO_PENDING);
+	return false;
+}
+
+IOCP_DECL BOOL WriteFile(
+  __in                 HANDLE       hFile,
+  __in                 LPCVOID      lpBuffer,
+  __in                 DWORD        nNumberOfBytesToWrite,
+  _Out_opt_            LPDWORD      lpNumberOfBytesWritten,
+  _Inout_              LPOVERLAPPED lpOverlapped)
+{
+	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(hFile);
+
+	if (s->_iocp == nullptr && lpOverlapped)
+	{
+		WSASetLastError(EOPNOTSUPP);
+		return false;
+	}
+
+	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
+
+	// *lpNumberOfBytesRecvd = 0;
+	assert(lpOverlapped);
+
+	struct io_uring_writefile_op : io_uring_operations
+	{
+		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		{
+		}
+	};
+
+	// now, enter IOCP emul logic
+	io_uring_writefile_op* op = io_uring_operation_allocator{}.allocate<io_uring_writefile_op>();
+	op->overlapped_ptr = lpOverlapped;
+	op->CompletionKey = s->_completion_key;
+
+	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	{
+		io_uring_prep_write(sqe, s->native_handle(), lpBuffer, nNumberOfBytesToWrite, -1);
+		io_uring_sqe_set_data(sqe, op);
+	});
+
+	WSASetLastError(ERROR_IO_PENDING);
+	return false;
+}
+

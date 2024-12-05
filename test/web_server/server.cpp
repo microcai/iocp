@@ -249,7 +249,7 @@ public:
 		if (listen(SOCKET_get_fd(listenSocket), SOMAXCONN) == SOCKET_ERROR)
 			errorHandle("listen");
 		// IOCP
-		eventQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, NULL, 0);
+		eventQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
 		if (eventQueue == NULL)
 			errorHandle("IOCP create");
 		if (CreateIoCompletionPort((HANDLE)listenSocket, eventQueue, (ULONG_PTR)0, 0) == NULL)

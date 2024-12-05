@@ -34,6 +34,10 @@
 #define _Out_
 #endif
 
+#ifndef _Out_opt_
+#define _Out_opt_
+#endif
+
 #ifndef _Inout_
 #define _Inout_
 #endif
@@ -47,12 +51,17 @@
 #define IOCP_DECL
 #endif
 typedef char CHAR;
+typedef char* LPSTR;
+typedef const char* LPCSTR;
+typedef const wchar_t* LPCWSTR;
+
 typedef int* LPINT;
 typedef unsigned long ULONG_PTR, *PULONG_PTR;
 typedef uint16_t WORD, LPWORD;
 typedef uint32_t DWORD, *LPDWORD, *DWORD_PTR;
 typedef bool BOOL; // bool is from stdbool if C99 mode.
 typedef void *PVOID, *LPVOID;
+typedef const void *LPCVOID;
 typedef uint16_t TCHAR;
 typedef struct sockaddr SOCKADDR, * LPSOCKADDR;
 typedef struct sockaddr_in SOCKADDR_IN;
@@ -141,6 +150,15 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 						_In_ DWORD dwRemoteAddressLength, _Out_ LPDWORD lpdwBytesReceived,
 						_In_ LPOVERLAPPED lpOverlapped);
 
+IOCP_DECL BOOL WSAConnectEx(
+  __in            SOCKET s,
+  __in            const sockaddr *name,
+  __in            int namelen,
+  _In_opt_        PVOID lpSendBuffer,
+  __in            DWORD dwSendDataLength,
+  __out           LPDWORD lpdwBytesSent,
+  __in            LPOVERLAPPED lpOverlapped
+);
 
 IOCP_DECL void GetAcceptExSockaddrs(
   __in  PVOID    lpOutputBuffer,
@@ -251,5 +269,72 @@ inline WORD MAKEWORD(uint a, uint b)
 
 #define CONTAINING_RECORD(address,type,field) \
 	((type*)((char*)(address)-(ULONG_PTR)(&((type*)0)->field)))
+
+
+typedef struct _SECURITY_ATTRIBUTES {
+  DWORD  nLength;
+  LPVOID lpSecurityDescriptor;
+  BOOL   bInheritHandle;
+} SECURITY_ATTRIBUTES, *PSECURITY_ATTRIBUTES, *LPSECURITY_ATTRIBUTES;
+
+enum {
+	GENERIC_READ = 1,
+	GENERIC_WRITE = 2,
+	GENERIC_EXECUTE = 4,
+};
+
+enum {
+	FILE_SHARE_READ = 1,
+	FILE_SHARE_WRITE = 2,
+	FILE_SHARE_DELETE = 4,
+};
+
+enum {
+	CREATE_NEW = 1,
+	CREATE_ALWAYS = 2,
+	OPEN_EXISTING = 3,
+	OPEN_ALWAYS = 4,
+	TRUNCATE_EXISTING = 5
+};
+
+IOCP_DECL HANDLE CreateFileA(
+  __in            LPCSTR                lpFileName,
+  __in            DWORD                 dwDesiredAccess,
+  __in            DWORD                 dwShareMode,
+  _In_opt_        LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  __in            DWORD                 dwCreationDisposition,
+  __in            DWORD                 dwFlagsAndAttributes,
+  _In_opt_        HANDLE                hTemplateFile
+);
+
+IOCP_DECL HANDLE CreateFileW(
+  __in            LPCWSTR               lpFileName,
+  __in            DWORD                 dwDesiredAccess,
+  __in            DWORD                 dwShareMode,
+  _In_opt_        LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  __in            DWORD                 dwCreationDisposition,
+  __in            DWORD                 dwFlagsAndAttributes,
+  _In_opt_        HANDLE                hTemplateFile
+);
+
+
+#define CreateFile CreateFileA
+
+IOCP_DECL BOOL ReadFile(
+  __in                HANDLE       hFile,
+  __out               LPVOID       lpBuffer,
+  __in                DWORD        nNumberOfBytesToRead,
+  _Out_opt_	          LPDWORD      lpNumberOfBytesRead,
+  _Inout_             LPOVERLAPPED lpOverlapped
+);
+
+IOCP_DECL BOOL WriteFile(
+  __in                 HANDLE       hFile,
+  __in                 LPCVOID      lpBuffer,
+  __in                 DWORD        nNumberOfBytesToWrite,
+  _Out_opt_            LPDWORD      lpNumberOfBytesWritten,
+  _Inout_              LPOVERLAPPED lpOverlapped
+);
+
 
 #endif //__IOCP__H__

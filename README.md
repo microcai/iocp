@@ -11,3 +11,28 @@ of what wepoll does.
 
 ## Usage
 
+将 iocp.cpp 和 iocp.h 俩文件带入你的项目即可。
+
+just add iocp.cpp and iocp.h to your project and compile with the rest codes.
+
+## Compatibale
+
+已经实现的接口有
+
+| IOCP 接口    | 状态 |
+| -------- | ------- |
+| CreateIoCompletionPort | ✅    |
+| GetQueuedCompletionStatus  | ✅ |
+| PostQueuedCompletionStatus   |  ✅  |
+| WSASend    |  ✅  |
+| WSARecv    |  ✅  |
+| AcceptEx   |  ✅  |
+| WSAConnectEx |✅ |
+| CreateFileA |✅ |
+| CreateFileW |✅ |
+| ReadFile |✅ |
+| WriteFile | ✅ |
+| CloseHandle |✅ |
+
+
+
