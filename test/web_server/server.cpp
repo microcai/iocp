@@ -130,7 +130,7 @@ private:
 		int readLength;
 		int sendResult;
 
-		HANDLE file = CreateFile(path.c_str(), GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, WSA_FLAG_OVERLAPPED, INVALID_HANDLE_VALUE);
+		HANDLE file = CreateFile(path.c_str(), GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, INVALID_HANDLE_VALUE);
 		if (file == INVALID_HANDLE_VALUE) co_return co_await notFound(socket);
 
 		auto_handle auto_close(file);
@@ -231,7 +231,6 @@ public:
 	SOCKET listenSocket6, listenSocket;
 	WSADATA windowsSocketData;
 	HANDLE eventQueue;
-	std::vector<std::thread> workerThreads;
 	DWORD recvBytes = 0, flags = 0;
 
 	ucoro::awaitable<void> start_accept(SOCKET listen_sock, int family)
@@ -315,16 +314,13 @@ public:
 		if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR)
 			errorHandle("listen");
 		// IOCP
-		eventQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+		eventQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
 		if (eventQueue == NULL)
 			errorHandle("IOCP create");
 		if (CreateIoCompletionPort((HANDLE)listenSocket6, eventQueue, (ULONG_PTR)0, 0) == NULL)
 			errorHandle("IOCP bind socket6");
 		if (CreateIoCompletionPort((HANDLE)listenSocket, eventQueue, (ULONG_PTR)0, 0) == NULL)
 			errorHandle("IOCP bind socket");
-		// build worker thread
-		for (int i = 0; i < std::thread::hardware_concurrency(); i++)
-			workerThreads.emplace_back(&run_event_loop, eventQueue);
 	}
 	~httpServer() {
 		//PostQueuedCompletionStatus(eventQueue, 0, NULL, NULL);

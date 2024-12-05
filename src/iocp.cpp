@@ -744,7 +744,7 @@ IOCP_DECL HANDLE CreateFileA(
   _In_opt_        HANDLE                hTemplateFile
 )
 {
-	assert(dwFlagsAndAttributes & WSA_FLAG_OVERLAPPED);
+	assert(dwFlagsAndAttributes & FILE_FLAG_OVERLAPPED);
 
 	int oflag = 0;
 	int mode = 0644;
