@@ -26,6 +26,8 @@ just add iocp.cpp and iocp.h to your project and compile with the rest codes.
 | PostQueuedCompletionStatus   |  ✅  |
 | WSASend    |  ✅  |
 | WSARecv    |  ✅  |
+| WSASendTo    |  ✅  |
+| WSARecvFrom    |  ✅  |
 | AcceptEx   |  ✅  |
 | WSAConnectEx |✅ |
 | CreateFileA |✅ |

@@ -195,6 +195,29 @@ IOCP_DECL int WSARecv(_In_ SOCKET s, _Inout_ LPWSABUF lpBuffers, _In_ DWORD dwBu
 					  _In_ LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine // must be NULL
 );
 
+IOCP_DECL int WSASendTo(
+    __in    SOCKET                             s,
+    __in    LPWSABUF                           lpBuffers,
+    __in    DWORD                              dwBufferCount,
+    __out   LPDWORD                            lpNumberOfBytesSent,
+    __in    DWORD                              dwFlags,
+    __in    const sockaddr                     *lpTo,
+    __in    int                                iTolen,
+    __in    LPWSAOVERLAPPED                    lpOverlapped,
+    __in    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
+);
+
+IOCP_DECL int WSARecvFrom(
+    __in    SOCKET                             s,
+    __in    LPWSABUF                           lpBuffers,
+    __in    DWORD                              dwBufferCount,
+    __out   LPDWORD                            lpNumberOfBytesRecvd,
+    __in    LPDWORD                            lpFlags,
+    __out   sockaddr                           *lpFrom,
+    __in    LPINT                              lpFromlen,
+    __in    LPWSAOVERLAPPED                    lpOverlapped,
+    __in    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
+);
 
 enum {
 	FD_CONNECT = 0x1,

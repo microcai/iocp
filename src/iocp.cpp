@@ -541,6 +541,132 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 	return SOCKET_ERROR;
 }
 
+
+IOCP_DECL int WSASendTo(
+    __in    SOCKET                             socket_,
+    __in    LPWSABUF                           lpBuffers,
+    __in    DWORD                              dwBufferCount,
+    __out   LPDWORD                            lpNumberOfBytesSent,
+    __in    DWORD                              dwFlags,
+    __in    const sockaddr                     *lpTo,
+    __in    int                                iTolen,
+    __in    LPWSAOVERLAPPED                    lpOverlapped,
+    __in    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine)
+{
+	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(socket_);
+
+	if (s->_iocp == nullptr && lpOverlapped)
+	{
+		WSASetLastError(EOPNOTSUPP);
+		return SOCKET_ERROR;
+	}
+
+	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
+
+	assert(lpOverlapped);
+	if (lpNumberOfBytesSent)
+	{
+		*lpNumberOfBytesSent = 0;
+	}
+
+	struct io_uring_write_op : io_uring_operations
+	{
+		std::vector<iovec> msg_iov;
+		msghdr msg = {};
+		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		{
+		}
+	};
+
+	// now, enter IOCP emul logic
+	io_uring_write_op* op = io_uring_operation_allocator{}.allocate<io_uring_write_op>();
+	op->lpCompletionRoutine = lpCompletionRoutine;
+	op->overlapped_ptr = lpOverlapped;
+	op->CompletionKey = s->_completion_key;
+	op->msg_iov.resize(dwBufferCount);
+	op->msg.msg_iovlen = dwBufferCount;
+	op->msg.msg_iov = op->msg_iov.data();
+	op->msg.msg_name = (void*) lpTo;
+	op->msg.msg_namelen = iTolen;
+	for (int i = 0; i < dwBufferCount; i++)
+	{
+		op->msg_iov[i].iov_base = lpBuffers[i].buf;
+		op->msg_iov[i].iov_len = lpBuffers[i].len;
+	}
+
+	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	{
+		io_uring_prep_sendmsg_zc(sqe, s->_socket_fd, &op->msg, 0);
+		io_uring_sqe_set_data(sqe, op);
+	});
+
+	WSASetLastError(ERROR_IO_PENDING);
+	return SOCKET_ERROR;
+}
+
+IOCP_DECL int WSARecvFrom(
+    __in    SOCKET                             socket_,
+    __in    LPWSABUF                           lpBuffers,
+    __in    DWORD                              dwBufferCount,
+    __out   LPDWORD                            lpNumberOfBytesRecvd,
+    __in    LPDWORD                            lpFlags,
+    __out   sockaddr                           *lpFrom,
+    __in    LPINT                              lpFromlen,
+    __in    LPWSAOVERLAPPED                    lpOverlapped,
+    __in    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine)
+{
+	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(socket_);
+
+	if (s->_iocp == nullptr && lpOverlapped)
+	{
+		WSASetLastError(EOPNOTSUPP);
+		return SOCKET_ERROR;
+	}
+
+	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
+
+	// *lpNumberOfBytesRecvd = 0;
+	assert(lpOverlapped);
+
+	struct io_uring_read_op : io_uring_operations
+	{
+		LPINT lpFromlen;
+		std::vector<iovec> msg_iov;
+		msghdr msg = {};
+		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		{
+			* lpFromlen = msg.msg_namelen;
+		}
+	};
+
+	// now, enter IOCP emul logic
+	io_uring_read_op* op = io_uring_operation_allocator{}.allocate<io_uring_read_op>();
+	op->lpCompletionRoutine = lpCompletionRoutine;
+	op->overlapped_ptr = lpOverlapped;
+	op->CompletionKey = s->_completion_key;
+	op->msg_iov.resize(dwBufferCount);
+	op->msg.msg_iovlen = dwBufferCount;
+	op->msg.msg_iov = op->msg_iov.data();
+	op->msg.msg_name = lpFrom;
+	op->msg.msg_namelen = *lpFromlen;
+	op->lpFromlen = lpFromlen;
+
+	for (int i = 0; i < dwBufferCount; i++)
+	{
+		op->msg_iov[i].iov_base = lpBuffers[i].buf;
+		op->msg_iov[i].iov_len = lpBuffers[i].len;
+	}
+
+	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	{
+		io_uring_prep_recvmsg(sqe, s->_socket_fd, &(op->msg), 0);
+		io_uring_sqe_set_data(sqe, op);
+	});
+
+	WSASetLastError(ERROR_IO_PENDING);
+	return SOCKET_ERROR;
+}
+
 void base_handle::unref()
 {
 	if (--ref_count == 0)
