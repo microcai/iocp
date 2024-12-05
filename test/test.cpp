@@ -67,10 +67,7 @@ ucoro::awaitable<void> accept_coro(SOCKET slisten, HANDLE iocp)
 int main()
 {
 	// Listening socket
-	SOCKET listener;
-
-	// Addr of listening socket
-	SOCKADDR_IN6 addr = {0};
+	SOCKET listener6, listener;
 
 	// meeeeehhhh
 	WSADATA wsaData;
@@ -84,44 +81,69 @@ int main()
 
 	// Create listening socket and
 	// put it in overlapped mode - WSA_FLAG_OVERLAPPED
-	listener = WSASocket(AF_INET6, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+	listener6 = WSASocket(AF_INET6, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+	if (listener6 == INVALID_SOCKET)
+	{
+		printf("Socket creation failed: %d\n", WSAGetLastError());
+	}
+	listener = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 	if (listener == INVALID_SOCKET)
 	{
 		printf("Socket creation failed: %d\n", WSAGetLastError());
 	}
 
-	// Setup address and port of
-	// listening socket
-	addr.sin6_family = AF_INET6;
-	addr.sin6_port = htons(PORT);
-
 	{
+		// Addr of listening socket
+		SOCKADDR_IN6 addr = {0};
+		// Setup address and port of
+		// listening socket
+		addr.sin6_family = AF_INET6;
+		addr.sin6_port = htons(PORT);
+		int v = 1;
+		setsockopt(listener6, SOL_SOCKET, SO_REUSEADDR, (char*) &v, sizeof (v));
+		// Bind listener to address and port
+		if (bind(listener6, (sockaddr*) &addr, sizeof(addr)) == SOCKET_ERROR)
+		{
+			puts("Socket binding failed");
+		}
+	}
+	{
+		// Addr of listening socket
+		SOCKADDR_IN addr = {0};
+		// Setup address and port of
+		// listening socket
+		addr.sin_family = AF_INET;
+		addr.sin_port = htons(PORT);
 		int v = 1;
 		setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, (char*) &v, sizeof (v));
-	}
-
-	// Bind listener to address and port
-	if (bind(listener, (sockaddr*) &addr, sizeof(addr)) == SOCKET_ERROR)
-	{
-		puts("Socket binding failed");
+		// Bind listener to address and port
+		if (bind(listener, (sockaddr*) &addr, sizeof(addr)) == SOCKET_ERROR)
+		{
+			puts("Socket binding failed");
+		}
 	}
 
 	// Start listening
+	listen(listener6, 1024);
 	listen(listener, 1024);
 
 	// Completion port for newly accepted sockets
 	// Link it to the main completion port
-	HANDLE comp_port = CreateIoCompletionPort((HANDLE)(listener), NULL, 0, 1);
+	HANDLE iocp_handle = CreateIoCompletionPort((HANDLE)(listener6), NULL, 0, 1);
+	CreateIoCompletionPort((HANDLE)(listener), iocp_handle, 0, 1);
 
 	printf("Listening on %d\n", PORT);
 
 	// 开 4个 acceptor
 	for (int i = 0; i < 32; i++)
-		accept_coro(listener, comp_port).detach();
+		accept_coro(listener6, iocp_handle).detach();
+	for (int i = 0; i < 32; i++)
+		accept_coro(listener, iocp_handle).detach();
 
 	// 进入 event loop
-	run_event_loop(comp_port);
+	run_event_loop(iocp_handle);
 	closesocket(listener);
-	CloseHandle(comp_port);
+	closesocket(listener6);
+	CloseHandle(iocp_handle);
 	return 0;
 }
