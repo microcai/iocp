@@ -97,7 +97,7 @@ int main()
 
 	{
 		int v = 1;
-		setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &v, sizeof (v));
+		setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, (char*) &v, sizeof (v));
 	}
 
 	// Bind listener to address and port
