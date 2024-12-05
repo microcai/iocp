@@ -38,7 +38,11 @@ struct basic_awaitable_overlapped : public OVERLAPPED
 
     void reset()
     {
-        memset(static_cast<OVERLAPPED*>(this), 0, sizeof (OVERLAPPED));
+        this->Internal = this->InternalHigh = 0;
+        this->hEvent = NULL;
+        this->Offset = 0xFFFFFFFF;
+        this->OffsetHigh = 0xFFFFFFFF;
+
         NumberOfBytes = 0;
         coro_handle = nullptr;
         completed = false;
