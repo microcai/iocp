@@ -30,7 +30,6 @@
 #define REQUEST_BUFFER_SIZE 1024
 #define FAIL_CODE -1
 #define BUFFER_N 1024
-#define THREADPOOL_SIZE 0
 
 using namespace std;
 
@@ -227,20 +226,21 @@ private:
 
 class httpServer {
 public:
-	struct sockaddr_in localSocketSetting;
-	SOCKET listenSocket;
+	struct sockaddr_in localSocketSetting = { AF_INET };
+	struct sockaddr_in6 localSocketSetting6 = { AF_INET6 };
+	SOCKET listenSocket6, listenSocket;
 	WSADATA windowsSocketData;
 	HANDLE eventQueue;
-	thread workerThreads[THREADPOOL_SIZE];
+	std::vector<std::thread> workerThreads;
 	DWORD recvBytes = 0, flags = 0;
 
-	ucoro::awaitable<void> start_accept()
+	ucoro::awaitable<void> start_accept(SOCKET listen_sock, int family)
 	{
 		for (;;)
 		{
-			SOCKET socket = WSASocket(2, 1 , 0, 0 , 0, WSA_FLAG_OVERLAPPED);
+			SOCKET socket = WSASocket(family, SOCK_STREAM , IPPROTO_TCP, 0 , 0, WSA_FLAG_OVERLAPPED);
 			awaitable_overlapped ov;
-			AcceptEx(listenSocket, socket, 0, 0, 0, 0, NULL, &ov);
+			AcceptEx(listen_sock, socket, 0, 0, 0, 0, NULL, &ov);
 			co_await wait_overlapped(ov);
 			CreateIoCompletionPort(socket, eventQueue, 0, 0);
 			handle_connection(socket).detach(eventQueue);
@@ -280,7 +280,8 @@ public:
 
 		for (int i=0; i < 64; i++)
 		{
-			start_accept().detach();
+			start_accept(listenSocket6, AF_INET6).detach();
+			start_accept(listenSocket, AF_INET).detach();
 		}
 
 		run_event_loop(eventQueue);
@@ -291,28 +292,39 @@ public:
 		if (WSAStartup(MAKEWORD(2, 2), &windowsSocketData) == SOCKET_ERROR)
 			errorHandle("WSAStartup");
 		// Fill in the address structure
-		localSocketSetting.sin_family = AF_INET;
-		localSocketSetting.sin_addr.s_addr = INADDR_ANY;
 		localSocketSetting.sin_port = htons(DEFAULT_PORT);
-		listenSocket = WSASocketW(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+		localSocketSetting6.sin6_port = htons(DEFAULT_PORT);
+
+		listenSocket6 = WSASocket(AF_INET6, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+		if (listenSocket6 == INVALID_SOCKET)
+			errorHandle("socket");
+		listenSocket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 		if (listenSocket == INVALID_SOCKET)
 			errorHandle("socket");
 		int v = 1;
+		setsockopt(listenSocket6, SOL_SOCKET, SO_REUSEPORT, (char*)&v, sizeof (v));
 		setsockopt(listenSocket, SOL_SOCKET, SO_REUSEPORT, (char*)&v, sizeof (v));
 
+		if (::bind(listenSocket6, (sockaddr*) &localSocketSetting6, sizeof(localSocketSetting6)) == SOCKET_ERROR)
+			errorHandle("bind6");
 		if (::bind(listenSocket, (sockaddr*) &localSocketSetting, sizeof(localSocketSetting)) == SOCKET_ERROR)
 			errorHandle("bind");
+
+		if (listen(listenSocket6, SOMAXCONN) == SOCKET_ERROR)
+			errorHandle("listen");
 		if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR)
 			errorHandle("listen");
 		// IOCP
 		eventQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
 		if (eventQueue == NULL)
 			errorHandle("IOCP create");
+		if (CreateIoCompletionPort((HANDLE)listenSocket6, eventQueue, (ULONG_PTR)0, 0) == NULL)
+			errorHandle("IOCP bind socket6");
 		if (CreateIoCompletionPort((HANDLE)listenSocket, eventQueue, (ULONG_PTR)0, 0) == NULL)
-			errorHandle("IOCP listen");
+			errorHandle("IOCP bind socket");
 		// build worker thread
-		for (int i = 0; i < THREADPOOL_SIZE; i++)
-			workerThreads[i] = thread(&run_event_loop, eventQueue);
+		for (int i = 0; i < std::thread::hardware_concurrency(); i++)
+			workerThreads.emplace_back(&run_event_loop, eventQueue);
 	}
 	~httpServer() {
 		//PostQueuedCompletionStatus(eventQueue, 0, NULL, NULL);
