@@ -8,6 +8,7 @@ typedef struct io_uring_operations
 	LPOVERLAPPED overlapped_ptr = 0;
 	ULONG_PTR CompletionKey = 0;
 	std::size_t size = 0;
+	LPOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine = nullptr;
 
 	virtual void do_complete(DWORD* lpNumberOfBytes) {};
 	virtual ~io_uring_operations(){}

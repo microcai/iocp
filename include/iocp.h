@@ -177,8 +177,13 @@ typedef struct __WSABUF
 	char* buf;
 } WSABUF, *LPWSABUF;
 
-struct WSAOVERLAPPED_COMPLETION_ROUTINE;
-typedef WSAOVERLAPPED_COMPLETION_ROUTINE* LPWSAOVERLAPPED_COMPLETION_ROUTINE;
+typedef void (*LPOVERLAPPED_COMPLETION_ROUTINE)(
+  __in  DWORD dwErrorCode,
+  __in  DWORD dwNumberOfBytesTransfered,
+  _Inout_  LPOVERLAPPED lpOverlapped
+);
+
+typedef LPOVERLAPPED_COMPLETION_ROUTINE LPWSAOVERLAPPED_COMPLETION_ROUTINE;
 
 IOCP_DECL int WSASend(_In_ SOCKET s, _In_ LPWSABUF lpBuffers, _In_ DWORD dwBufferCount,
 					  _Out_ LPDWORD lpNumberOfBytesSent, _In_ DWORD dwFlags, _In_ LPWSAOVERLAPPED lpOverlapped,

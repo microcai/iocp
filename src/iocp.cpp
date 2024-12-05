@@ -222,6 +222,11 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 			io_uring_cqe_seen(&iocp->ring_, cqe);
 		}
 
+		if (op->lpCompletionRoutine)
+		{
+			op->lpCompletionRoutine(cqe->res < 0 ? -cqe->res : 0, cqe->res < 0 ? 0 :cqe->res, op->overlapped_ptr);
+		}
+
 		io_uring_operation_allocator{}.deallocate(op, op->size);
 
 		if (lpOverlapped == NULL)
@@ -440,12 +445,11 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 	if (s->_iocp == nullptr && lpOverlapped)
 	{
 		WSASetLastError(EOPNOTSUPP);
-		return false;
+		return SOCKET_ERROR;
 	}
 
 	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
 
-	assert(lpCompletionRoutine == 0);
 	assert(lpOverlapped);
 	if (lpNumberOfBytesSent)
 	{
@@ -463,6 +467,7 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 
 	// now, enter IOCP emul logic
 	io_uring_write_op* op = io_uring_operation_allocator{}.allocate<io_uring_write_op>();
+	op->lpCompletionRoutine = lpCompletionRoutine;
 	op->overlapped_ptr = lpOverlapped;
 	op->CompletionKey = s->_completion_key;
 	op->msg_iov.resize(dwBufferCount);
@@ -481,7 +486,7 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 	});
 
 	WSASetLastError(ERROR_IO_PENDING);
-	return false;
+	return SOCKET_ERROR;
 }
 
 IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWORD dwBufferCount,
@@ -494,13 +499,12 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 	if (s->_iocp == nullptr && lpOverlapped)
 	{
 		WSASetLastError(EOPNOTSUPP);
-		return false;
+		return SOCKET_ERROR;
 	}
 
 	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
 
 	// *lpNumberOfBytesRecvd = 0;
-	assert(lpCompletionRoutine == 0);
 	assert(lpOverlapped);
 
 	struct io_uring_read_op : io_uring_operations
@@ -514,6 +518,7 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 
 	// now, enter IOCP emul logic
 	io_uring_read_op* op = io_uring_operation_allocator{}.allocate<io_uring_read_op>();
+	op->lpCompletionRoutine = lpCompletionRoutine;
 	op->overlapped_ptr = lpOverlapped;
 	op->CompletionKey = s->_completion_key;
 	op->msg_iov.resize(dwBufferCount);
@@ -528,12 +533,12 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
 	{
-		io_uring_prep_recvmsg(sqe, s->_socket_fd, &op->msg, 0);
+		io_uring_prep_recvmsg(sqe, s->_socket_fd, &(op->msg), 0);
 		io_uring_sqe_set_data(sqe, op);
 	});
 
 	WSASetLastError(ERROR_IO_PENDING);
-	return false;
+	return SOCKET_ERROR;
 }
 
 void base_handle::unref()
