@@ -17,6 +17,7 @@
 
 #include "io_uring_operation_allocator.hpp"
 
+#define IORING_CQE_F_USER 32
 
 namespace {
 
@@ -150,7 +151,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 					continue;
 				}
 				// timeout
-				WSASetLastError(-io_uring_ret);
+				WSASetLastError(ERROR_WAIT_TIMEOUT);
 				return false;
 			}
 
@@ -169,7 +170,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 				{
 					continue;
 				}
-				WSASetLastError(ERROR_WAIT_TIMEOUT);
+				WSASetLastError(ERROR_BUSY);
 				return false;
 			}
 
@@ -205,6 +206,12 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 			else if (uring_unlikely(cqe->flags & IORING_CQE_F_NOTIF))
 			{
 			}
+			else if (uring_unlikely(cqe->flags == IORING_CQE_F_USER))
+			{
+				op->do_complete(0);
+				io_uring_cqe_seen(&iocp->ring_, cqe);
+				return true;
+			}
 			else
 			{
 				op->do_complete(lpNumberOfBytes);
@@ -215,8 +222,48 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 
 		io_uring_operation_allocator{}.deallocate(op, op->size);
 
+		if (lpOverlapped == NULL)
+		{
+			if (dwMilliseconds == UINT32_MAX)
+			{
+				continue;
+			}
+			WSASetLastError(ERROR_BUSY);
+			return false;
+		}
+
 		return true;
 	}
+}
+
+IOCP_DECL BOOL WINAPI PostQueuedCompletionStatus(
+  _In_     HANDLE       CompletionPort,
+  _In_     DWORD        dwNumberOfBytesTransferred,
+  _In_     ULONG_PTR    dwCompletionKey,
+  _In_opt_ LPOVERLAPPED lpOverlapped)
+{
+	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(CompletionPort);
+
+	struct io_uring_nop_op : io_uring_operations
+	{
+		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		{
+			overlapped_ptr = nullptr;
+			CompletionKey = 0;
+		}
+	};
+
+	io_uring_nop_op* op = io_uring_operation_allocator{}.allocate<io_uring_nop_op>();
+	op->overlapped_ptr = lpOverlapped;
+	op->CompletionKey = dwCompletionKey;
+
+	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	{
+		io_uring_prep_msg_ring_cqe_flags(sqe, iocp->ring_.ring_fd, dwNumberOfBytesTransferred, (__u64) op, 0, IORING_CQE_F_USER);
+		io_uring_sqe_set_data(sqe, op);
+	});
+
+	return true;
 }
 
 /** ********************************************************************************** **/

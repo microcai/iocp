@@ -22,6 +22,10 @@
 #define _In_
 #endif
 
+#ifndef _In_opt_
+#define _In_opt_
+#endif
+
 #ifndef __out
 #define __out
 #endif
@@ -88,6 +92,13 @@ IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(__in HANDLE FileHandle, __in HAND
 IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __out LPDWORD lpNumberOfBytes,
 												__out PULONG_PTR lpCompletionKey, __out LPOVERLAPPED* lpOverlapped,
 												__in DWORD dwMilliseconds);
+
+IOCP_DECL BOOL WINAPI PostQueuedCompletionStatus(
+  _In_     HANDLE       CompletionPort,
+  _In_     DWORD        dwNumberOfBytesTransferred,
+  _In_     ULONG_PTR    dwCompletionKey,
+  _In_opt_ LPOVERLAPPED lpOverlapped
+);
 
 // WSA Socket api(Overlapped) the work with iocp
 #define SOCKET_ERROR -1
@@ -205,6 +216,7 @@ enum
 	WSA_WAIT_TIMEOUT = -1,
 	WSA_WAIT_EVENT_0 = 0,
 	ERROR_HANDLE_EOF = 0x26,
+	ERROR_BUSY = 0xAA,
 	ERROR_IO_PENDING = 0xF1,
 	ERROR_WAIT_TIMEOUT = 0x102,
 
