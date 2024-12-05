@@ -109,6 +109,15 @@ IOCP_DECL BOOL WINAPI PostQueuedCompletionStatus(
   _In_opt_ LPOVERLAPPED lpOverlapped
 );
 
+IOCP_DECL BOOL WINAPI CancelIo(
+  _In_ HANDLE hFile
+);
+
+IOCP_DECL BOOL WINAPI CancelIoEx(
+  _In_     HANDLE       hFile,
+  _In_opt_ LPOVERLAPPED lpOverlapped
+);
+
 // WSA Socket api(Overlapped) the work with iocp
 #define SOCKET_ERROR -1
 

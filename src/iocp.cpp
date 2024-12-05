@@ -21,66 +21,9 @@
 
 #define IORING_CQE_F_USER 32
 
-namespace {
-
-struct nullable_mutex
-{
-	std::optional<std::mutex> m;
-
-	void lock()
-	{
-		if (m)
-			m->lock();
-	}
-
-	void unlock()
-	{
-		if (m)
-			m->unlock();
-	}
-
-	nullable_mutex(int thread_hint)
-	{
-		if (thread_hint != 1)
-			m.emplace();
-	}
-
-};
-}
-
-struct iocp_handle_emu_class final : public base_handle
-{
-	io_uring ring_;
-	mutable nullable_mutex submit_mutex;
-	mutable nullable_mutex wait_mutex;
-
-	iocp_handle_emu_class(int NumberOfConcurrentThreads)
-		: submit_mutex(NumberOfConcurrentThreads)
-		, wait_mutex(NumberOfConcurrentThreads)
-	{
-		io_uring_queue_exit(&ring_);
-	}
-
-	~iocp_handle_emu_class(){}
-
-	template<typename PrepareOP> auto submit_io(PrepareOP&& preparer)
-	{
-		std::scoped_lock<nullable_mutex> l(submit_mutex);
-		io_uring_sqe * sqe = io_uring_get_sqe(&ring_);
-		while (!sqe)
-		{
-			io_uring_submit(&ring_);
-			sqe = io_uring_get_sqe(&ring_);
-		}
-		preparer(sqe);
-		return io_uring_submit(&ring_);
-	}
-};
-
 SOCKET_emu_class::~SOCKET_emu_class()
 {
-	auto* iocp = reinterpret_cast<iocp_handle_emu_class*>(_iocp);
-	iocp->submit_io([this](io_uring_sqe* sqe)
+	_iocp->submit_io([this](io_uring_sqe* sqe)
 	{
 		io_uring_prep_close(sqe, _socket_fd);
 		io_uring_sqe_set_data(sqe, nullptr);
@@ -122,7 +65,7 @@ IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(__in HANDLE FileHandle, __in HAND
 	if (FileHandle != INVALID_HANDLE_VALUE)
 	{
 		dynamic_cast<SOCKET_emu_class*>(FileHandle)->_completion_key = CompletionKey;
-		dynamic_cast<SOCKET_emu_class*>(FileHandle)->_iocp = iocphandle;
+		dynamic_cast<SOCKET_emu_class*>(FileHandle)->_iocp = dynamic_cast<iocp_handle_emu_class*>(iocphandle);
 	}
 
 	return iocphandle;
@@ -273,6 +216,58 @@ IOCP_DECL BOOL WINAPI PostQueuedCompletionStatus(
 	return true;
 }
 
+IOCP_DECL BOOL WINAPI CancelIo(_In_ HANDLE hFile)
+{
+	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(hFile);
+
+	iocp_handle_emu_class* iocp = s->_iocp;
+
+	struct io_uring_cancel_op : io_uring_operations
+	{
+		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		{
+		}
+	};
+
+	// now, enter IOCP emul logic
+	io_uring_cancel_op* op = io_uring_operation_allocator{}.allocate<io_uring_cancel_op>();
+
+	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	{
+		io_uring_prep_cancel_fd(sqe, s->_socket_fd, IORING_ASYNC_CANCEL_ALL);
+		io_uring_sqe_set_data(sqe, op);
+	});
+
+	return TRUE;
+}
+
+IOCP_DECL BOOL WINAPI CancelIoEx(_In_ HANDLE  hFile, _In_opt_ LPOVERLAPPED lpOverlapped)
+{
+	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(hFile);
+
+	iocp_handle_emu_class* iocp = s->_iocp;
+
+	struct io_uring_cancel_op : io_uring_operations
+	{
+		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		{
+		}
+	};
+
+	// now, enter IOCP emul logic
+	io_uring_cancel_op* op = io_uring_operation_allocator{}.allocate<io_uring_cancel_op>();
+	void* user_data = (void*) lpOverlapped->Internal;
+
+	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	{
+		io_uring_prep_cancel(sqe, user_data, IORING_ASYNC_CANCEL_ALL);
+		io_uring_sqe_set_data(sqe, op);
+	});
+
+	return TRUE;
+}
+
+
 /** ********************************************************************************** **/
 // WSA* for use with IOCP
 /** ********************************************************************************** **/
@@ -304,7 +299,7 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 		return false;
 	}
 
-	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(listen_sock->_iocp);
+	iocp_handle_emu_class* iocp = listen_sock->_iocp;
 
 	if (lpOverlapped == nullptr)
 	{
@@ -351,6 +346,8 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 
 	io_uring_accept_op* op = io_uring_operation_allocator{}.allocate<io_uring_accept_op>();
 	op->overlapped_ptr = lpOverlapped;
+	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
+
 	op->accept_into = dynamic_cast<SOCKET_emu_class*>(sAcceptSocket);
 	op->CompletionKey = listen_sock->_completion_key;
 	op->lpOutputBuffer = lpOutputBuffer;
@@ -382,7 +379,7 @@ IOCP_DECL BOOL WSAConnectEx(
 		return false;
 	}
 
-	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
+	iocp_handle_emu_class* iocp = s->_iocp;
 
 	assert(lpOverlapped);
 
@@ -406,6 +403,7 @@ IOCP_DECL BOOL WSAConnectEx(
 	// now, enter IOCP emul logic
 	io_uring_connect_op* op = io_uring_operation_allocator{}.allocate<io_uring_connect_op>();
 	op->overlapped_ptr = lpOverlapped;
+	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
 	op->lpSendBuffer = lpSendBuffer;
 	op->dwSendDataLength = dwSendDataLength;
@@ -448,7 +446,7 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 		return SOCKET_ERROR;
 	}
 
-	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
+	iocp_handle_emu_class* iocp = s->_iocp;
 
 	assert(lpOverlapped);
 	if (lpNumberOfBytesSent)
@@ -469,6 +467,7 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 	io_uring_write_op* op = io_uring_operation_allocator{}.allocate<io_uring_write_op>();
 	op->lpCompletionRoutine = lpCompletionRoutine;
 	op->overlapped_ptr = lpOverlapped;
+	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
 	op->msg_iov.resize(dwBufferCount);
 	op->msg.msg_iovlen = dwBufferCount;
@@ -502,7 +501,7 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 		return SOCKET_ERROR;
 	}
 
-	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
+	iocp_handle_emu_class* iocp = s->_iocp;
 
 	// *lpNumberOfBytesRecvd = 0;
 	assert(lpOverlapped);
@@ -520,6 +519,7 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 	io_uring_read_op* op = io_uring_operation_allocator{}.allocate<io_uring_read_op>();
 	op->lpCompletionRoutine = lpCompletionRoutine;
 	op->overlapped_ptr = lpOverlapped;
+	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
 	op->msg_iov.resize(dwBufferCount);
 	op->msg.msg_iovlen = dwBufferCount;
@@ -561,7 +561,7 @@ IOCP_DECL int WSASendTo(
 		return SOCKET_ERROR;
 	}
 
-	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
+	iocp_handle_emu_class* iocp = s->_iocp;
 
 	assert(lpOverlapped);
 	if (lpNumberOfBytesSent)
@@ -582,6 +582,7 @@ IOCP_DECL int WSASendTo(
 	io_uring_write_op* op = io_uring_operation_allocator{}.allocate<io_uring_write_op>();
 	op->lpCompletionRoutine = lpCompletionRoutine;
 	op->overlapped_ptr = lpOverlapped;
+	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
 	op->msg_iov.resize(dwBufferCount);
 	op->msg.msg_iovlen = dwBufferCount;
@@ -623,7 +624,7 @@ IOCP_DECL int WSARecvFrom(
 		return SOCKET_ERROR;
 	}
 
-	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
+	iocp_handle_emu_class* iocp = s->_iocp;
 
 	// *lpNumberOfBytesRecvd = 0;
 	assert(lpOverlapped);
@@ -643,6 +644,7 @@ IOCP_DECL int WSARecvFrom(
 	io_uring_read_op* op = io_uring_operation_allocator{}.allocate<io_uring_read_op>();
 	op->lpCompletionRoutine = lpCompletionRoutine;
 	op->overlapped_ptr = lpOverlapped;
+	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
 	op->msg_iov.resize(dwBufferCount);
 	op->msg.msg_iovlen = dwBufferCount;
@@ -822,7 +824,7 @@ IOCP_DECL BOOL ReadFile(
 		return false;
 	}
 
-	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
+	iocp_handle_emu_class* iocp = s->_iocp;
 
 	// *lpNumberOfBytesRecvd = 0;
 	assert(lpOverlapped);
@@ -837,6 +839,7 @@ IOCP_DECL BOOL ReadFile(
 	// now, enter IOCP emul logic
 	io_uring_readfile_op* op = io_uring_operation_allocator{}.allocate<io_uring_readfile_op>();
 	op->overlapped_ptr = lpOverlapped;
+	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
 	__u64 offset = lpOverlapped->Offset + ( static_cast<__u64>(lpOverlapped->OffsetHigh) << 32 );
 
@@ -865,7 +868,7 @@ IOCP_DECL BOOL WriteFile(
 		return false;
 	}
 
-	iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(s->_iocp);
+	iocp_handle_emu_class* iocp = s->_iocp;
 
 	// *lpNumberOfBytesRecvd = 0;
 	assert(lpOverlapped);
@@ -880,6 +883,7 @@ IOCP_DECL BOOL WriteFile(
 	// now, enter IOCP emul logic
 	io_uring_writefile_op* op = io_uring_operation_allocator{}.allocate<io_uring_writefile_op>();
 	op->overlapped_ptr = lpOverlapped;
+	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
 
 	__u64 offset = lpOverlapped->Offset + ( static_cast<__u64>(lpOverlapped->OffsetHigh) << 32 );

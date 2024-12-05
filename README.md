@@ -35,6 +35,8 @@ just add iocp.cpp and iocp.h to your project and compile with the rest codes.
 | ReadFile |✅ |
 | WriteFile | ✅ |
 | CloseHandle |✅ |
+| CancelIo|✅|
+| CancelIoEx|✅|
 
 
 
