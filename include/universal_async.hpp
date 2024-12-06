@@ -167,17 +167,17 @@ inline void run_event_loop(HANDLE iocp_handle)
                     &ipOverlap,
                     dwMilliseconds_to_wait);
 
-        if (ipOverlap)
+        if (ipOverlap) [[likely]]
         {
             process_overlapped_event(ipOverlap, NumberOfBytes);
         }
-        else if (ipCompletionKey == 1)
+        else if (ipCompletionKey == (ULONG_PTR) iocp_handle) [[unlikely]]
         {
             quit_if_no_work = true;
             // mark eventloop to quit if no more pending IO.
         }
 
-        if (quit_if_no_work)
+        if  ( quit_if_no_work) [[unlikely]]
         {
             // 检查还在投递中的 IO 操作数。
             if (pending_works())
@@ -192,5 +192,5 @@ inline void run_event_loop(HANDLE iocp_handle)
 // 通知 loop 如果没有进行中的 IO 操作的时候，就退出循环。
 inline void exit_event_loop_when_empty(HANDLE iocp_handle)
 {
-    PostQueuedCompletionStatus(iocp_handle, 0, 1, NULL);
+    PostQueuedCompletionStatus(iocp_handle, 0, (ULONG_PTR) iocp_handle, NULL);
 }
