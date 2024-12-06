@@ -152,7 +152,7 @@ private:
 
 		co_await wait_overlapped(ov);
 
-		char buffer[1024] = { 0 };
+		char buffer[1024];
 
 		awaitable_overlapped file_ov;
 		file_ov.set_offset(0);
