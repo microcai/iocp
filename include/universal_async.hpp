@@ -30,6 +30,18 @@ struct dummy_mutex
 };
 
 template <typename MUTEX>
+struct counter_trait
+{
+    using type = std::atomic_int;
+};
+
+template <>
+struct counter_trait<dummy_mutex>
+{
+    using type = long;
+};
+
+template <typename MUTEX>
 struct basic_awaitable_overlapped : public OVERLAPPED
 {
     MUTEX m;
@@ -37,7 +49,7 @@ struct basic_awaitable_overlapped : public OVERLAPPED
     std::coroutine_handle<> coro_handle;
     bool completed;
 
-    static std::atomic_int out_standing;
+    static typename counter_trait<MUTEX>::type out_standing;
 
     void reset()
     {
@@ -71,14 +83,14 @@ struct basic_awaitable_overlapped : public OVERLAPPED
     }
 };
 
-#ifndef DISABLE_THREADS
+#ifdef DISABLE_THREADS
 using awaitable_overlapped = basic_awaitable_overlapped<dummy_mutex>;
 #else
 using awaitable_overlapped = basic_awaitable_overlapped<std::mutex>;
 #endif
 
 template <typename MUTEX>
-inline std::atomic_int basic_awaitable_overlapped<MUTEX>::out_standing;
+inline typename counter_trait<MUTEX>::type basic_awaitable_overlapped<MUTEX>::out_standing;
 
 template <typename MUTEX>
 struct BasicOverlappedAwaiter
@@ -119,7 +131,7 @@ public:
 
 inline int pending_works()
 {
-    return awaitable_overlapped::out_standing.load();
+    return awaitable_overlapped::out_standing;
 }
 
 // wait for overlapped to became complete. return NumberOfBytes
