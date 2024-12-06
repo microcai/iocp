@@ -90,7 +90,7 @@ using awaitable_overlapped = basic_awaitable_overlapped<std::mutex>;
 #endif
 
 template <typename MUTEX>
-inline typename counter_trait<MUTEX>::type basic_awaitable_overlapped<MUTEX>::out_standing;
+inline typename counter_trait<MUTEX>::type basic_awaitable_overlapped<MUTEX>::out_standing = 0;
 
 template <typename MUTEX>
 struct BasicOverlappedAwaiter
