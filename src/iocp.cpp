@@ -45,13 +45,16 @@ IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(__in HANDLE FileHandle, __in HAND
 		iocp_handle_emu_class* ret = new iocp_handle_emu_class{static_cast<int>(NumberOfConcurrentThreads)};
 		iocphandle = ret;
 		io_uring_params params = {0};
-		params.flags = IORING_SETUP_CQSIZE;
+		params.flags = IORING_SETUP_CQSIZE|IORING_SETUP_SUBMIT_ALL|IORING_SETUP_TASKRUN_FLAG|IORING_SETUP_COOP_TASKRUN;
+		if (NumberOfConcurrentThreads == 1)
+			params.flags |= IORING_SETUP_SINGLE_ISSUER;
+
 		params.cq_entries = 65536;
 		params.sq_entries = 128;
 		// params.features = IORING_FEAT_EXT_ARG;
-		params.features = IORING_FEAT_NODROP | IORING_FEAT_EXT_ARG | IORING_FEAT_FAST_POLL | IORING_FEAT_RW_CUR_POS;
+		params.features = IORING_FEAT_NODROP | IORING_FEAT_EXT_ARG | IORING_FEAT_FAST_POLL | IORING_FEAT_RW_CUR_POS |IORING_FEAT_CUR_PERSONALITY;
 		auto result = io_uring_queue_init_params(128, &ret->ring_, &params);
-		// auto result = io_uring_queue_init(16384, &ret->ring_, 0);
+		// auto result = io_uring_queue_init(16384, &ret->ring_, IORING_SETUP_SQPOLL|IORING_SETUP_CLAMP);
 		ret->_socket_fd = ret->ring_.ring_fd;
 
 		if (result < 0)
@@ -467,15 +470,17 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 	op->msg_iov.resize(dwBufferCount);
 	op->msg.msg_iovlen = dwBufferCount;
 	op->msg.msg_iov = op->msg_iov.data();
+	int64_t total_send_bytes = 0;
 	for (int i = 0; i < dwBufferCount; i++)
 	{
 		op->msg_iov[i].iov_base = lpBuffers[i].buf;
 		op->msg_iov[i].iov_len = lpBuffers[i].len;
+		total_send_bytes += lpBuffers[i].len;
 	}
 
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
 	{
-		if (dwBufferCount > 1 || lpBuffers->len > 2000)
+		if (total_send_bytes > 3000)
 			io_uring_prep_sendmsg_zc(sqe, s->_socket_fd, &op->msg, 0);
 		else
 			io_uring_prep_sendmsg(sqe, s->_socket_fd, &op->msg, 0);
@@ -837,7 +842,9 @@ IOCP_DECL BOOL ReadFile(
 	op->overlapped_ptr = lpOverlapped;
 	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
-	__u64 offset = lpOverlapped->Offset + ( static_cast<__u64>(lpOverlapped->OffsetHigh) << 32 );
+	__u64 offset = lpOverlapped->OffsetHigh;
+	offset <<= 32;
+	offset += lpOverlapped->Offset;
 
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
 	{
