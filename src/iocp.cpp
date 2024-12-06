@@ -130,17 +130,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 
 			if (uring_unlikely(cqe->flags & IORING_CQE_F_MORE))
 			{
-				if(cqe->res < 0)
-				{
-					if (cqe->res == -EOF)
-					{
-						WSASetLastError(ERROR_HANDLE_EOF);
-					}
-				}
-				else
-				{
-					op->do_complete(cqe, lpNumberOfBytes);
-				}
+				op->do_complete(cqe, lpNumberOfBytes);
 				io_uring_cqe_seen(&iocp->ring_, cqe);
 				continue;
 			}
@@ -322,7 +312,7 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
-			if (cqe->res < 0)
+			if (cqe->res <= 0)
 			{
 				WSASetLastError(-cqe->res);
 				*lpNumberOfBytes == 0;
@@ -398,7 +388,9 @@ IOCP_DECL BOOL WSAConnectEx(
 
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
-			if (lpSendBuffer && dwSendDataLength)
+			if (cqe->res < 0)
+				WSASetLastError(-cqe->res);
+			else if (lpSendBuffer && dwSendDataLength)
 			{
 				auto send_bytes = send(s->native_handle(), lpSendBuffer, dwSendDataLength, MSG_NOSIGNAL|MSG_DONTWAIT);
 				if (lpNumberOfBytes && send_bytes > 0)
@@ -467,6 +459,8 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 		msghdr msg = {};
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
+			if (cqe->res < 0)
+				WSASetLastError(-cqe->res);
 		}
 	};
 
@@ -524,6 +518,10 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 		msghdr msg = {};
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
+			if (cqe->res < 0)
+				WSASetLastError(-cqe->res);
+			else if (cqe->res == 0)
+				WSASetLastError(ERROR_HANDLE_EOF);
 		}
 	};
 
@@ -587,6 +585,8 @@ IOCP_DECL int WSASendTo(
 		msghdr msg = {};
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
+			if (cqe->res < 0)
+				WSASetLastError(-cqe->res);
 		}
 	};
 
@@ -648,6 +648,10 @@ IOCP_DECL int WSARecvFrom(
 		msghdr msg = {};
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
+			if (cqe->res < 0)
+				WSASetLastError(-cqe->res);
+			else if (cqe->res == 0)
+				WSASetLastError(ERROR_HANDLE_EOF);
 			* lpFromlen = msg.msg_namelen;
 		}
 	};
@@ -843,6 +847,10 @@ IOCP_DECL BOOL ReadFile(
 	{
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
+			if (cqe->res < 0)
+				WSASetLastError(-cqe->res);
+			else if (cqe->res == 0)
+				WSASetLastError(ERROR_HANDLE_EOF);
 		}
 	};
 
@@ -889,6 +897,8 @@ IOCP_DECL BOOL WriteFile(
 	{
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
+			if (cqe->res < 0)
+				WSASetLastError(-cqe->res);
 		}
 	};
 
