@@ -37,6 +37,8 @@ struct basic_awaitable_overlapped : public OVERLAPPED
     std::coroutine_handle<> coro_handle;
     bool completed;
 
+    static std::atomic_int out_standing;
+
     void reset()
     {
         this->Internal = this->InternalHigh = 0;
@@ -69,6 +71,15 @@ struct basic_awaitable_overlapped : public OVERLAPPED
     }
 };
 
+#ifndef DISABLE_THREADS
+using awaitable_overlapped = basic_awaitable_overlapped<dummy_mutex>;
+#else
+using awaitable_overlapped = basic_awaitable_overlapped<std::mutex>;
+#endif
+
+template <typename MUTEX>
+inline std::atomic_int basic_awaitable_overlapped<MUTEX>::out_standing;
+
 template <typename MUTEX>
 struct BasicOverlappedAwaiter
 {
@@ -93,6 +104,7 @@ public:
     {
         std::scoped_lock<MUTEX> l(ov.m);
         ov.coro_handle = handle;
+        ++ awaitable_overlapped::out_standing;
     }
 
     DWORD await_resume()
@@ -100,15 +112,15 @@ public:
         std::scoped_lock<MUTEX> l(ov.m);
         auto NumberOfBytes = ov.NumberOfBytes;
         ov.reset();
+        -- awaitable_overlapped::out_standing;
         return NumberOfBytes;
     }
 };
 
-#ifndef DISABLE_THREADS
-using awaitable_overlapped = basic_awaitable_overlapped<dummy_mutex>;
-#else
-using awaitable_overlapped = basic_awaitable_overlapped<std::mutex>;
-#endif
+inline int pending_works()
+{
+    return awaitable_overlapped::out_standing.load();
+}
 
 // wait for overlapped to became complete. return NumberOfBytes
 inline ucoro::awaitable<DWORD> wait_overlapped(awaitable_overlapped& ov)
@@ -144,15 +156,41 @@ inline void run_event_loop(HANDLE iocp_handle)
         DWORD NumberOfBytes;
         ULONG_PTR ipCompletionKey;
         LPOVERLAPPED ipOverlap = nullptr;
+        bool quit_if_no_work = false;
+
+        DWORD dwMilliseconds_to_wait = quit_if_no_work ? ( pending_works() ? INFINITE : 0 ) : INFINITE;
         // get IO status
         auto  result = GetQueuedCompletionStatus(
                     iocp_handle,
                     &NumberOfBytes,
                     (PULONG_PTR)&ipCompletionKey,
                     &ipOverlap,
-                    INFINITE);
+                    dwMilliseconds_to_wait);
 
         if (ipOverlap)
+        {
             process_overlapped_event(ipOverlap, NumberOfBytes);
+        }
+        else if (ipCompletionKey == 1)
+        {
+            quit_if_no_work = true;
+            // mark eventloop to quit if no more pending IO.
+        }
+
+        if (quit_if_no_work)
+        {
+            // 检查还在投递中的 IO 操作数。
+            if (pending_works())
+                continue;
+            else
+                break;
+        }
+
     }
+}
+
+// 通知 loop 如果没有进行中的 IO 操作的时候，就退出循环。
+inline void exit_event_loop_when_empty(HANDLE iocp_handle)
+{
+    PostQueuedCompletionStatus(iocp_handle, 0, 1, NULL);
 }
