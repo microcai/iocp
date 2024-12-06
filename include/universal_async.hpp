@@ -104,7 +104,7 @@ public:
     }
 };
 
-#ifdef __SINGAL_THREADED
+#ifndef DISABLE_THREADS
 using awaitable_overlapped = basic_awaitable_overlapped<dummy_mutex>;
 #else
 using awaitable_overlapped = basic_awaitable_overlapped<std::mutex>;
