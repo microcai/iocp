@@ -170,7 +170,7 @@ inline void run_event_loop(HANDLE iocp_handle)
         LPOVERLAPPED ipOverlap = nullptr;
         bool quit_if_no_work = false;
 
-        DWORD dwMilliseconds_to_wait = quit_if_no_work ? ( pending_works() ? INFINITE : 0 ) : INFINITE;
+        DWORD dwMilliseconds_to_wait = quit_if_no_work ? ( pending_works() ? 500 : 0 ) : INFINITE;
         // get IO status
         auto  result = GetQueuedCompletionStatus(
                     iocp_handle,
@@ -205,4 +205,37 @@ inline void run_event_loop(HANDLE iocp_handle)
 inline void exit_event_loop_when_empty(HANDLE iocp_handle)
 {
     PostQueuedCompletionStatus(iocp_handle, 0, (ULONG_PTR) iocp_handle, NULL);
+}
+
+// 执行这个，可以保证 协程被 IOCP 线程调度. 特别是 一个线程一个 IOCP 的模式下特有用
+inline ucoro::awaitable<void> run_on_iocp_thread(HANDLE iocp_handle)
+{
+    struct SwitchIOCPAwaitable : public OVERLAPPED
+    {
+        HANDLE iocp_handle;
+
+        std::unique_ptr<awaitable_overlapped> coro;
+
+        SwitchIOCPAwaitable(HANDLE iocp_handle) : iocp_handle(iocp_handle) {
+            coro.reset(new awaitable_overlapped{});
+        }
+
+        constexpr bool await_ready() noexcept
+        {
+            return false;
+        }
+
+        void await_suspend(std::coroutine_handle<> handle)
+        {
+            coro->coro_handle = handle;
+            PostQueuedCompletionStatus(iocp_handle, 0, 0, coro.get());
+        }
+
+        void await_resume()
+        {
+        }
+    };
+
+
+    co_await SwitchIOCPAwaitable{iocp_handle};
 }

@@ -3,6 +3,8 @@
 
 #include <mutex>
 #include <optional>
+#include <thread>
+#include <iostream>
 
 #include <liburing.h>
 
@@ -62,7 +64,7 @@ struct nullable_mutex
 
 struct iocp_handle_emu_class final : public base_handle
 {
-	io_uring ring_;
+	::io_uring ring_ = { 0 };
 	mutable nullable_mutex submit_mutex;
 	mutable nullable_mutex wait_mutex;
 
@@ -70,10 +72,14 @@ struct iocp_handle_emu_class final : public base_handle
 		: submit_mutex(NumberOfConcurrentThreads)
 		, wait_mutex(NumberOfConcurrentThreads)
 	{
-		io_uring_queue_exit(&ring_);
+		ring_.ring_fd = -1;
 	}
 
-	~iocp_handle_emu_class(){}
+	~iocp_handle_emu_class()
+	{
+		if (ring_.ring_fd != -1)
+			io_uring_queue_exit(&ring_);
+	}
 
 	template<typename PrepareOP> auto submit_io(PrepareOP&& preparer)
 	{
