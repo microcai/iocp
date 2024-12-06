@@ -238,9 +238,38 @@ public:
 	SOCKET listenSocket6, listenSocket;
 	WSADATA windowsSocketData;
 	HANDLE eventQueue;
+	#ifndef _WIN32
+	std::array<HANDLE, 24> eventQueues;
+	#endif
 	DWORD recvBytes = 0, flags = 0;
 
-	ucoro::awaitable<void> start_accept(SOCKET listen_sock, int family)
+	void start() {
+		printf("Start.......\n");
+
+		int batch = 8;
+	#ifndef _WIN32
+			batch = eventQueues.size();
+	#endif
+
+		for (int i=0; i < batch; i++)
+		{
+	#ifndef _WIN32
+			start_accept(listenSocket6, AF_INET6, eventQueues[i % eventQueues.size()]).detach();
+			start_accept(listenSocket, AF_INET, eventQueues[i % eventQueues.size()]).detach();
+	#else
+			start_accept(listenSocket6, AF_INET6, eventQueue).detach();
+			start_accept(listenSocket, AF_INET, eventQueues).detach();
+	#endif
+		}
+
+	#ifndef _WIN32
+		for (int i=0; i < eventQueues.size(); i++)
+			std::thread(&run_event_loop, eventQueues[i]).detach();
+	#endif
+		run_event_loop(eventQueue);
+	}
+
+	ucoro::awaitable<void> start_accept(SOCKET listen_sock, int family, HANDLE binded_event_queue)
 	{
 		for (;;)
 		{
@@ -252,7 +281,7 @@ public:
 			auto accepted_size = co_await wait_overlapped(ov);
 			if (GetLastError() != ERROR_OPERATION_ABORTED)
 			{
-				CreateIoCompletionPort((HANDLE)socket, eventQueue, 0, 0);
+				CreateIoCompletionPort((HANDLE)socket, binded_event_queue, 0, 0);
 				sockaddr* localaddr, *remoteaddr;
 				socklen_t localaddr_len, remoteaddr_len;
 				GetAcceptExSockaddrs(outputbuffer, accepted_size, sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &localaddr, &localaddr_len, &remoteaddr, &remoteaddr_len);
@@ -260,14 +289,14 @@ public:
 				auto err = setsockopt(socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char *)&listen_sock, sizeof(listen_sock) );
 				#endif
 
-				handle_connection(socket).detach(eventQueue);
+				handle_connection(socket, binded_event_queue).detach(binded_event_queue);
 			}
 			else
 				break;
 		}
 	}
 
-	ucoro::awaitable<void> handle_connection(SOCKET socket)
+	ucoro::awaitable<void> handle_connection(SOCKET socket, HANDLE iocp)
 	{
 		WSABUF wsaBuf;
 		char buffer[BUFFER_N];
@@ -275,6 +304,8 @@ public:
 		wsaBuf.len = sizeof(buffer);
 
 		DWORD recvBytes = 0, flags = 0;
+
+		co_await run_on_iocp_thread(iocp);
 
 		awaitable_overlapped ov;
  		WSARecv(socket, &wsaBuf,1, &recvBytes, &flags, &ov, NULL);
@@ -294,27 +325,26 @@ public:
 		closesocket(socket);
 	}
 
-	void start() {
-		printf("Start.......\n");
 
-
-		for (int i=0; i < 64; i++)
-		{
-			start_accept(listenSocket6, AF_INET6).detach();
-			start_accept(listenSocket, AF_INET).detach();
-		}
-
-		run_event_loop(eventQueue);
-
-	}
 #pragma warning(disable: 26495)
 	httpServer() {
 		if (WSAStartup(MAKEWORD(2, 2), &windowsSocketData) == SOCKET_ERROR)
 			errorHandle("WSAStartup");
 		// IOCP
+
 		eventQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
 		if (eventQueue == NULL)
 			errorHandle("IOCP create");
+
+#ifndef _WIN32
+		for (int i=0; i < eventQueues.size(); i ++)
+		{
+			eventQueues[i] = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+			if (eventQueues[i] == NULL)
+				errorHandle("IOCP create");
+		}
+#endif
+
 		// Fill in the address structure
 		localSocketSetting6.sin6_port = htons(DEFAULT_PORT);
 		localSocketSetting.sin_port = htons(DEFAULT_PORT);
@@ -372,7 +402,12 @@ private:
 			closesocket(listenSocket);
 			CancelIo(listenSocket6);
 			closesocket(listenSocket6);
-			exit_event_loop_when_empty(co_await ucoro::local_storage_t<HANDLE>{});
+
+#ifndef _WIN32
+			for (HANDLE p : eventQueues)
+				exit_event_loop_when_empty(p);
+#endif
+			exit_event_loop_when_empty(eventQueue);
 		}
 		else
 			co_return co_await response.runGetRoute(messageSocket, "/404");
