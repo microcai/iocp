@@ -250,15 +250,20 @@ public:
 			DWORD out_size = 0;
 			AcceptEx(listen_sock, socket, outputbuffer, 0,sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &out_size, &ov);
 			auto accepted_size = co_await wait_overlapped(ov);
-			CreateIoCompletionPort((HANDLE)socket, eventQueue, 0, 0);
-			sockaddr* localaddr, *remoteaddr;
-			socklen_t localaddr_len, remoteaddr_len;
-			GetAcceptExSockaddrs(outputbuffer, accepted_size, sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &localaddr, &localaddr_len, &remoteaddr, &remoteaddr_len);
-			#ifdef _WIN32
-			auto err = setsockopt(socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char *)&listen_sock, sizeof(listen_sock) );
-			#endif
+			if (GetLastError() != ERROR_OPERATION_ABORTED)
+			{
+				CreateIoCompletionPort((HANDLE)socket, eventQueue, 0, 0);
+				sockaddr* localaddr, *remoteaddr;
+				socklen_t localaddr_len, remoteaddr_len;
+				GetAcceptExSockaddrs(outputbuffer, accepted_size, sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &localaddr, &localaddr_len, &remoteaddr, &remoteaddr_len);
+				#ifdef _WIN32
+				auto err = setsockopt(socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char *)&listen_sock, sizeof(listen_sock) );
+				#endif
 
-			handle_connection(socket).detach(eventQueue);
+				handle_connection(socket).detach(eventQueue);
+			}
+			else
+				break;
 		}
 	}
 
@@ -360,8 +365,18 @@ private:
 		response response;
 		if (req.requestType == req.GET)
 			co_return co_await response.runGetRoute(messageSocket, req.filePath);
+		else if (req.requestType == req.POST)
+		{
+			// close all listen socket
+			CancelIo(listenSocket);
+			closesocket(listenSocket);
+			CancelIo(listenSocket6);
+			closesocket(listenSocket6);
+			exit_event_loop_when_empty(co_await ucoro::local_storage_t<HANDLE>{});
+		}
 		else
 			co_return co_await response.runGetRoute(messageSocket, "/404");
+		co_return -1;
 	}
 };
 
