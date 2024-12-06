@@ -1,6 +1,5 @@
 #include <vector>
 
-#include "iocp.h"
 
 #include <sys/eventfd.h>
 #include <sys/epoll.h>
@@ -8,6 +7,7 @@
 
 #include "internal_iocp_struct.hpp"
 
+#include "iocp.h"
 
 struct wsa_event_emu_class : public base_handle
 {
