@@ -2,6 +2,7 @@
 #pragma once
 
 #include "iocp.h"
+#include <liburing.h>
 
 typedef struct io_uring_operations
 {
@@ -10,7 +11,7 @@ typedef struct io_uring_operations
 	std::size_t size = 0;
 	LPOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine = nullptr;
 
-	virtual void do_complete(DWORD* lpNumberOfBytes) {};
+	virtual void do_complete(io_uring_cqe* cqe, DWORD*) {};
 	virtual ~io_uring_operations(){}
 
 }* io_uring_operation_ptr;

@@ -139,7 +139,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 				}
 				else
 				{
-					op->do_complete(lpNumberOfBytes);
+					op->do_complete(cqe, lpNumberOfBytes);
 				}
 				io_uring_cqe_seen(&iocp->ring_, cqe);
 				continue;
@@ -149,13 +149,15 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 			}
 			else if (uring_unlikely(cqe->flags == IORING_CQE_F_USER))
 			{
-				op->do_complete(0);
+				*lpCompletionKey = op->CompletionKey;
+				*lpOverlapped = op->overlapped_ptr;
+				op->do_complete(cqe, 0);
 				io_uring_cqe_seen(&iocp->ring_, cqe);
 				return true;
 			}
 			else
 			{
-				op->do_complete(lpNumberOfBytes);
+				op->do_complete(cqe, lpNumberOfBytes);
 			}
 
 			io_uring_cqe_seen(&iocp->ring_, cqe);
@@ -194,7 +196,7 @@ IOCP_DECL BOOL WINAPI PostQueuedCompletionStatus(
 
 	struct io_uring_nop_op : io_uring_operations
 	{
-		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
 			overlapped_ptr = nullptr;
 			CompletionKey = 0;
@@ -222,7 +224,7 @@ IOCP_DECL BOOL WINAPI CancelIo(_In_ HANDLE hFile)
 
 	struct io_uring_cancel_op : io_uring_operations
 	{
-		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
 		}
 	};
@@ -247,7 +249,7 @@ IOCP_DECL BOOL WINAPI CancelIoEx(_In_ HANDLE  hFile, _In_opt_ LPOVERLAPPED lpOve
 
 	struct io_uring_cancel_op : io_uring_operations
 	{
-		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
 		}
 	};
@@ -318,8 +320,15 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 
 		PVOID lpOutputBuffer;
 
-		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
+			if (cqe->res < 0)
+			{
+				WSASetLastError(-cqe->res);
+				*lpNumberOfBytes == 0;
+				return;
+			}
+
 			accept_into->_socket_fd = *lpNumberOfBytes;
 
 			getsockname(accept_into->_socket_fd, &local_addr, &local_addr_len);
@@ -387,7 +396,7 @@ IOCP_DECL BOOL WSAConnectEx(
 		DWORD dwSendDataLength;
 		SOCKET s;
 
-		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
 			if (lpSendBuffer && dwSendDataLength)
 			{
@@ -456,7 +465,7 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 	{
 		std::vector<iovec> msg_iov;
 		msghdr msg = {};
-		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
 		}
 	};
@@ -513,7 +522,7 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 	{
 		std::vector<iovec> msg_iov;
 		msghdr msg = {};
-		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
 		}
 	};
@@ -576,7 +585,7 @@ IOCP_DECL int WSASendTo(
 	{
 		std::vector<iovec> msg_iov;
 		msghdr msg = {};
-		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
 		}
 	};
@@ -637,7 +646,7 @@ IOCP_DECL int WSARecvFrom(
 		LPINT lpFromlen;
 		std::vector<iovec> msg_iov;
 		msghdr msg = {};
-		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
 			* lpFromlen = msg.msg_namelen;
 		}
@@ -832,7 +841,7 @@ IOCP_DECL BOOL ReadFile(
 
 	struct io_uring_readfile_op : io_uring_operations
 	{
-		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
 		}
 	};
@@ -878,7 +887,7 @@ IOCP_DECL BOOL WriteFile(
 
 	struct io_uring_writefile_op : io_uring_operations
 	{
-		virtual void do_complete(DWORD* lpNumberOfBytes) override
+		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
 		}
 	};
