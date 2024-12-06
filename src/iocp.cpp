@@ -78,6 +78,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 	struct iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(CompletionPort);
 	struct io_uring_cqe* cqe = nullptr;
 	struct __kernel_timespec ts = {.tv_sec = dwMilliseconds / 1000, .tv_nsec = dwMilliseconds % 1000 * 1000000};
+	*lpOverlapped = nullptr;
 
 	while (1)
 	{
@@ -119,14 +120,6 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 				return false;
 			}
 
-			if (lpOverlapped)
-			{
-				*lpOverlapped = op->overlapped_ptr;
-			}
-			if (lpCompletionKey)
-			{
-				*lpCompletionKey = op->CompletionKey;
-			}
 			if (lpNumberOfBytes)
 			{
 				*lpNumberOfBytes = cqe->res;
@@ -165,6 +158,8 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 			io_uring_cqe_seen(&iocp->ring_, cqe);
 		}
 
+		*lpCompletionKey = op->CompletionKey;
+		*lpOverlapped = op->overlapped_ptr;
 		if (op->lpCompletionRoutine)
 		{
 			op->lpCompletionRoutine(cqe->res < 0 ? -cqe->res : 0, cqe->res < 0 ? 0 :cqe->res, op->overlapped_ptr);
@@ -420,8 +415,8 @@ IOCP_DECL BOOL WSAConnectEx(
 
 IOCP_DECL void GetAcceptExSockaddrs(__in PVOID lpOutputBuffer, __in DWORD dwReceiveDataLength,
 									__in DWORD dwLocalAddressLength, __in DWORD dwRemoteAddressLength,
-									__out sockaddr** LocalSockaddr, __out LPINT LocalSockaddrLength,
-									__out sockaddr** RemoteSockaddr, __out LPINT RemoteSockaddrLength)
+									__out sockaddr** LocalSockaddr, __out socklen_t* LocalSockaddrLength,
+									__out sockaddr** RemoteSockaddr, __out socklen_t* RemoteSockaddrLength)
 {
 	// lpOutputBuffer 的结构是
 	// [local_addr_length][local_addr][remote_addr_len][remote_addr]

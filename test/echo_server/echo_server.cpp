@@ -448,7 +448,7 @@ static void write_completed(BOOL resultOk, DWORD length,
    else // !resultOk, assumes connection was reset
    {
       int err = GetLastError();
-      printf("* error %d on send, assuming connection was reset!\n");
+      printf("* error %d on send, assuming connection was reset!\n", err);
       destroy_connection(socketState, ovl);
    }
 }

@@ -131,7 +131,8 @@ private:
 		int sendResult;
 
 		HANDLE file = CreateFile(path.c_str(), GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, INVALID_HANDLE_VALUE);
-		if (file == INVALID_HANDLE_VALUE) co_return co_await notFound(socket);
+		if (file == INVALID_HANDLE_VALUE)
+			co_return co_await notFound(socket);
 
 		auto_handle auto_close(file);
 
@@ -153,18 +154,24 @@ private:
 
 		char buffer[1024] = { 0 };
 
+		awaitable_overlapped file_ov;
+		file_ov.set_offset(0);
+
 		do
 		{
-			ReadFile(file, buffer, sizeof buffer, 0 , &ov);
-			if (GetLastError() == ERROR_HANDLE_EOF)
+			// ov.Offset = ov.OffsetHigh = 0;
+			auto ret = ReadFile(file, buffer, sizeof buffer, 0 , &file_ov);
+			auto err = GetLastError();
+			if (err == ERROR_HANDLE_EOF)
 			{
 				break;
 			}
 
-			readLength = co_await wait_overlapped(ov);
+			readLength = co_await wait_overlapped(file_ov);
 
 			if (readLength > 0)
 			{
+				file_ov.add_offset(readLength);
 				wsabuf.buf = buffer;
 				wsabuf.len = readLength;
 				sendResult = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
@@ -187,7 +194,7 @@ private:
 	}
 	ucoro::awaitable<int> notFound(SOCKET& socket) {
 		WSABUF buf[1];
-		buf[0].buf = DEFAULT_ERROR_404;
+		buf[0].buf =  (char*) DEFAULT_ERROR_404;
 		buf[0].len = sizeof(DEFAULT_ERROR_404) - 1;
 		awaitable_overlapped ov;
 
@@ -239,9 +246,18 @@ public:
 		{
 			SOCKET socket = WSASocket(family, SOCK_STREAM , IPPROTO_TCP, 0 , 0, WSA_FLAG_OVERLAPPED);
 			awaitable_overlapped ov;
-			AcceptEx(listen_sock, socket, 0, 0, 0, 0, NULL, &ov);
-			co_await wait_overlapped(ov);
-			CreateIoCompletionPort(socket, eventQueue, 0, 0);
+			char outputbuffer[128];
+			DWORD out_size = 0;
+			AcceptEx(listen_sock, socket, outputbuffer, 0,sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &out_size, &ov);
+			auto accepted_size = co_await wait_overlapped(ov);
+			CreateIoCompletionPort((HANDLE)socket, eventQueue, 0, 0);
+			sockaddr* localaddr, *remoteaddr;
+			socklen_t localaddr_len, remoteaddr_len;
+			GetAcceptExSockaddrs(outputbuffer, accepted_size, sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &localaddr, &localaddr_len, &remoteaddr, &remoteaddr_len);
+			#ifdef _WIN32
+			auto err = setsockopt(socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char *)&listen_sock, sizeof(listen_sock) );
+			#endif
+
 			handle_connection(socket).detach(eventQueue);
 		}
 	}
@@ -290,19 +306,32 @@ public:
 	httpServer() {
 		if (WSAStartup(MAKEWORD(2, 2), &windowsSocketData) == SOCKET_ERROR)
 			errorHandle("WSAStartup");
+		// IOCP
+		eventQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+		if (eventQueue == NULL)
+			errorHandle("IOCP create");
 		// Fill in the address structure
-		localSocketSetting.sin_port = htons(DEFAULT_PORT);
 		localSocketSetting6.sin6_port = htons(DEFAULT_PORT);
+		localSocketSetting.sin_port = htons(DEFAULT_PORT);
 
-		listenSocket6 = WSASocket(AF_INET6, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+		listenSocket6 = WSASocket(AF_INET6, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
 		if (listenSocket6 == INVALID_SOCKET)
 			errorHandle("socket");
-		listenSocket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+		listenSocket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
 		if (listenSocket == INVALID_SOCKET)
 			errorHandle("socket");
+
+		if (CreateIoCompletionPort((HANDLE)listenSocket6, eventQueue, (ULONG_PTR)0, 0) == NULL)
+			errorHandle("IOCP bind socket6");
+		if (CreateIoCompletionPort((HANDLE)listenSocket, eventQueue, (ULONG_PTR)0, 0) == NULL)
+			errorHandle("IOCP bind socket");
+
 		int v = 1;
-		setsockopt(listenSocket6, SOL_SOCKET, SO_REUSEPORT, (char*)&v, sizeof (v));
-		setsockopt(listenSocket, SOL_SOCKET, SO_REUSEPORT, (char*)&v, sizeof (v));
+		setsockopt(listenSocket6, SOL_SOCKET, SO_REUSEADDR, (char*)&v, sizeof (v));
+		#ifdef IPV6_V6ONLY
+		setsockopt(listenSocket6, SOL_IPV6, IPV6_V6ONLY, (char*)&v, sizeof (v));
+		#endif
+		setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, (char*)&v, sizeof (v));
 
 		if (::bind(listenSocket6, (sockaddr*) &localSocketSetting6, sizeof(localSocketSetting6)) == SOCKET_ERROR)
 			errorHandle("bind6");
@@ -313,17 +342,11 @@ public:
 			errorHandle("listen");
 		if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR)
 			errorHandle("listen");
-		// IOCP
-		eventQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
-		if (eventQueue == NULL)
-			errorHandle("IOCP create");
-		if (CreateIoCompletionPort((HANDLE)listenSocket6, eventQueue, (ULONG_PTR)0, 0) == NULL)
-			errorHandle("IOCP bind socket6");
-		if (CreateIoCompletionPort((HANDLE)listenSocket, eventQueue, (ULONG_PTR)0, 0) == NULL)
-			errorHandle("IOCP bind socket");
+
 	}
 	~httpServer() {
 		//PostQueuedCompletionStatus(eventQueue, 0, NULL, NULL);
+		closesocket(listenSocket6);
 		closesocket(listenSocket);
 		WSACleanup();
 	}

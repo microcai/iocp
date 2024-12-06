@@ -50,9 +50,9 @@ ucoro::awaitable<void> accept_coro(SOCKET slisten, HANDLE iocp)
 		// printf("New con: %p\n", client_socket);
 
 		LPSOCKADDR local_addr = 0;
-		int local_addr_length = 0;
+		socklen_t local_addr_length = 0;
 		LPSOCKADDR remote_addr = 0;
-		int remote_addr_length = 0;
+		socklen_t remote_addr_length = 0;
 		DWORD address_length = sizeof(sockaddr_in6) + 16 ;
 
 		GetAcceptExSockaddrs(addr_buff, 0, address_length, address_length, &local_addr,

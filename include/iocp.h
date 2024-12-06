@@ -170,14 +170,14 @@ IOCP_DECL BOOL WSAConnectEx(
 );
 
 IOCP_DECL void GetAcceptExSockaddrs(
-  __in  PVOID    lpOutputBuffer,
-  __in  DWORD    dwReceiveDataLength,
-  __in  DWORD    dwLocalAddressLength,
-  __in  DWORD    dwRemoteAddressLength,
-  __out sockaddr **LocalSockaddr,
-  __out LPINT    LocalSockaddrLength,
-  __out sockaddr **RemoteSockaddr,
-  __out LPINT    RemoteSockaddrLength
+  __in  PVOID      lpOutputBuffer,
+  __in  DWORD      dwReceiveDataLength,
+  __in  DWORD      dwLocalAddressLength,
+  __in  DWORD      dwRemoteAddressLength,
+  __out sockaddr** LocalSockaddr,
+  __out socklen_t* LocalSockaddrLength,
+  __out sockaddr** RemoteSockaddr,
+  __out socklen_t* RemoteSockaddrLength
 );
 
 typedef struct __WSABUF

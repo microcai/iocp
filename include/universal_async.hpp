@@ -2,6 +2,7 @@
 #pragma once
 
 #include "awaitable.hpp"
+#include <cstdint>
 
 
 #ifdef _WIN32
@@ -40,16 +41,30 @@ struct basic_awaitable_overlapped : public OVERLAPPED
     {
         this->Internal = this->InternalHigh = 0;
         this->hEvent = NULL;
-        this->Offset = 0xFFFFFFFF;
-        this->OffsetHigh = 0xFFFFFFFF;
-
         NumberOfBytes = 0;
         coro_handle = nullptr;
         completed = false;
     }
 
+    void set_offset(uint64_t offset)
+    {
+        this->Offset = offset & 0xFFFFFFFF;
+        this->OffsetHigh = (offset >> 32);
+    }
+
+    void add_offset(uint64_t offset)
+    {
+        uint64_t cur_offset = this->OffsetHigh;
+        cur_offset <<= 32;
+        cur_offset += this->Offset;
+        cur_offset += offset;
+        Offset = cur_offset & 0xFFFFFFFF;
+        OffsetHigh = (cur_offset >> 32);
+    }
+
     basic_awaitable_overlapped()
     {
+        Offset = OffsetHigh = 0xFFFFFFFF;
         reset();
     }
 };
@@ -136,11 +151,6 @@ inline void run_event_loop(HANDLE iocp_handle)
                     (PULONG_PTR)&ipCompletionKey,
                     &ipOverlap,
                     INFINITE);
-        if (result == 0)
-        {
-            auto err = GetLastError();
-            continue;
-        }
 
         if (ipOverlap)
             process_overlapped_event(ipOverlap, NumberOfBytes);
