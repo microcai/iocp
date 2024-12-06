@@ -566,7 +566,7 @@ IOCP_DECL int WSASendTo(
 
 	if (s->_iocp == nullptr && lpOverlapped) [[unlikely]]
 	{
-		WSASetLastError(EOPNOTSUPP);
+		WSASetLastError(WSAEOPNOTSUPP);
 		return SOCKET_ERROR;
 	}
 
