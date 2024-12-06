@@ -475,7 +475,10 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
 	{
-		io_uring_prep_sendmsg_zc(sqe, s->_socket_fd, &op->msg, 0);
+		if (dwBufferCount > 1 || lpBuffers->len > 2000)
+			io_uring_prep_sendmsg_zc(sqe, s->_socket_fd, &op->msg, 0);
+		else
+			io_uring_prep_sendmsg(sqe, s->_socket_fd, &op->msg, 0);
 		io_uring_sqe_set_data(sqe, op);
 	});
 
@@ -775,8 +778,6 @@ IOCP_DECL HANDLE CreateFileA(
 		case CREATE_ALWAYS:
 			oflag |= O_CREAT;
 			fd = open(lpFileName, oflag, mode );
-			if (fd >= 0)
-				ftruncate(fd, 0);
 			break;
 	}
 
