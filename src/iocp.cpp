@@ -93,7 +93,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 			// auto io_uring_ret =
 			// 	io_uring_submit_and_wait_timeout(&iocp->ring_, &cqe, 1,  dwMilliseconds == UINT32_MAX ? nullptr : &ts, nullptr);
 
-			if (io_uring_ret < 0)
+			if (io_uring_ret < 0) [[unlikely]]
 			{
 				if (io_uring_ret == -EINTR)
 				{
@@ -104,7 +104,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 				return false;
 			}
 
-			if (io_uring_cq_has_overflow(&(iocp->ring_)))
+			if (io_uring_cq_has_overflow(&(iocp->ring_))) [[unlikely]]
 			{
 				std::cerr << "uring completion queue overflow!" << std::endl;
 				std::terminate();
@@ -112,7 +112,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 
 			// get LPOVERLAPPED from cqe
 			op = reinterpret_cast<io_uring_operation_ptr>(io_uring_cqe_get_data(cqe));
-			if (!op)
+			if (!op) [[unlikely]]
 			{
 				io_uring_cqe_seen(&iocp->ring_, cqe);
 				if (dwMilliseconds == UINT32_MAX)
@@ -123,21 +123,21 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 				return false;
 			}
 
-			if (lpNumberOfBytes)
+			if (lpNumberOfBytes) [[likely]]
 			{
 				*lpNumberOfBytes = cqe->res;
 			}
 
-			if (uring_unlikely(cqe->flags & IORING_CQE_F_MORE))
+			if (cqe->flags & IORING_CQE_F_MORE) [[unlikely]]
 			{
 				op->do_complete(cqe, lpNumberOfBytes);
 				io_uring_cqe_seen(&iocp->ring_, cqe);
 				continue;
 			}
-			else if (uring_unlikely(cqe->flags & IORING_CQE_F_NOTIF))
+			else if (uring_unlikely(cqe->flags & IORING_CQE_F_NOTIF)) [[unlikely]]
 			{
 			}
-			else if (uring_unlikely(cqe->flags == IORING_CQE_F_USER))
+			else if (uring_unlikely(cqe->flags == IORING_CQE_F_USER)) [[unlikely]]
 			{
 				*lpCompletionKey = op->CompletionKey;
 				*lpOverlapped = op->overlapped_ptr;
@@ -145,7 +145,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 				io_uring_cqe_seen(&iocp->ring_, cqe);
 				return true;
 			}
-			else
+			else [[likely]]
 			{
 				op->do_complete(cqe, lpNumberOfBytes);
 			}
@@ -155,16 +155,16 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 
 		*lpCompletionKey = op->CompletionKey;
 		*lpOverlapped = op->overlapped_ptr;
-		if (op->lpCompletionRoutine)
+		if (op->lpCompletionRoutine) [[unlikely]]
 		{
 			op->lpCompletionRoutine(cqe->res < 0 ? -cqe->res : 0, cqe->res < 0 ? 0 :cqe->res, op->overlapped_ptr);
 		}
 
 		io_uring_operation_allocator{}.deallocate(op, op->size);
 
-		if (lpOverlapped == NULL)
+		if (lpOverlapped == NULL) [[unlikely]]
 		{
-			if (dwMilliseconds == UINT32_MAX)
+			if (dwMilliseconds == UINT32_MAX) [[likely]]
 			{
 				continue;
 			}
@@ -283,7 +283,7 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 {
 	SOCKET_emu_class* listen_sock = dynamic_cast<SOCKET_emu_class*>(sListenSocket);
 
-	if (listen_sock->_iocp == nullptr && lpOverlapped)
+	if (listen_sock->_iocp == nullptr && lpOverlapped) [[unlikely]]
 	{
 		WSASetLastError(EOPNOTSUPP);
 		return false;
@@ -291,7 +291,7 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 
 	iocp_handle_emu_class* iocp = listen_sock->_iocp;
 
-	if (lpOverlapped == nullptr)
+	if (lpOverlapped == nullptr) [[unlikely]]
 	{
 		struct sockaddr addr;
 		socklen_t addr_len = sizeof(addr);
@@ -312,7 +312,7 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
-			if (cqe->res <= 0)
+			if (cqe->res <= 0) [[unlikely]]
 			{
 				WSASetLastError(-cqe->res);
 				*lpNumberOfBytes == 0;
@@ -324,7 +324,7 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 			getsockname(accept_into->_socket_fd, &local_addr, &local_addr_len);
 
 			// 向 lpOutputBuffer 写入数据，以便 GetAcceptExSockaddrs 解析
-			if (lpOutputBuffer)
+			if (lpOutputBuffer) [[likely]]
 			{
 				// lpOutputBuffer 的结构是
 				// [local_addr_length][local_addr][remote_addr_len][remote_addr]
@@ -370,7 +370,7 @@ IOCP_DECL BOOL WSAConnectEx(
 {
 	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(socket_);
 
-	if (s->_iocp == nullptr && lpOverlapped)
+	if (s->_iocp == nullptr && lpOverlapped) [[unlikely]]
 	{
 		WSASetLastError(EOPNOTSUPP);
 		return false;
@@ -388,9 +388,9 @@ IOCP_DECL BOOL WSAConnectEx(
 
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
-			if (cqe->res < 0)
+			if (cqe->res < 0) [[unlikely]]
 				WSASetLastError(-cqe->res);
-			else if (lpSendBuffer && dwSendDataLength)
+			else if (lpSendBuffer && dwSendDataLength) [[unlikely]]
 			{
 				auto send_bytes = send(s->native_handle(), lpSendBuffer, dwSendDataLength, MSG_NOSIGNAL|MSG_DONTWAIT);
 				if (lpNumberOfBytes && send_bytes > 0)
@@ -439,7 +439,7 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 {
 	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(socket_);
 
-	if (s->_iocp == nullptr && lpOverlapped)
+	if (s->_iocp == nullptr && lpOverlapped) [[unlikely]]
 	{
 		WSASetLastError(EOPNOTSUPP);
 		return SOCKET_ERROR;
@@ -448,10 +448,9 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 	iocp_handle_emu_class* iocp = s->_iocp;
 
 	assert(lpOverlapped);
-	if (lpNumberOfBytesSent)
-	{
+
+	if (lpNumberOfBytesSent) [[likely]]
 		*lpNumberOfBytesSent = 0;
-	}
 
 	struct io_uring_write_op : io_uring_operations
 	{
@@ -483,7 +482,7 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
 	{
-		if (total_send_bytes > 3000)
+		if (total_send_bytes > 3000) [[unlikely]]
 			io_uring_prep_sendmsg_zc(sqe, s->_socket_fd, &op->msg, 0);
 		else
 			io_uring_prep_sendmsg(sqe, s->_socket_fd, &op->msg, 0);
@@ -518,9 +517,9 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 		msghdr msg = {};
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
-			if (cqe->res < 0)
+			if (cqe->res < 0) [[unlikely]]
 				WSASetLastError(-cqe->res);
-			else if (cqe->res == 0)
+			else if (cqe->res == 0) [[unlikely]]
 				WSASetLastError(ERROR_HANDLE_EOF);
 		}
 	};
@@ -565,7 +564,7 @@ IOCP_DECL int WSASendTo(
 {
 	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(socket_);
 
-	if (s->_iocp == nullptr && lpOverlapped)
+	if (s->_iocp == nullptr && lpOverlapped) [[unlikely]]
 	{
 		WSASetLastError(EOPNOTSUPP);
 		return SOCKET_ERROR;
@@ -574,10 +573,8 @@ IOCP_DECL int WSASendTo(
 	iocp_handle_emu_class* iocp = s->_iocp;
 
 	assert(lpOverlapped);
-	if (lpNumberOfBytesSent)
-	{
-		*lpNumberOfBytesSent = 0;
-	}
+
+	*lpNumberOfBytesSent = 0;
 
 	struct io_uring_write_op : io_uring_operations
 	{
@@ -648,11 +645,12 @@ IOCP_DECL int WSARecvFrom(
 		msghdr msg = {};
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
-			if (cqe->res < 0)
+			if (cqe->res < 0) [[unlikely]]
 				WSASetLastError(-cqe->res);
-			else if (cqe->res == 0)
+			else if (cqe->res == 0) [[unlikely]]
 				WSASetLastError(ERROR_HANDLE_EOF);
-			* lpFromlen = msg.msg_namelen;
+			else [[likely]]
+				* lpFromlen = msg.msg_namelen;
 		}
 	};
 
@@ -832,7 +830,7 @@ IOCP_DECL BOOL ReadFile(
 {
 	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(hFile);
 
-	if (s->_iocp == nullptr && lpOverlapped)
+	if (s->_iocp == nullptr && lpOverlapped) [[unlikely]]
 	{
 		WSASetLastError(EOPNOTSUPP);
 		return false;
@@ -847,9 +845,9 @@ IOCP_DECL BOOL ReadFile(
 	{
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
-			if (cqe->res < 0)
+			if (cqe->res < 0) [[unlikely]]
 				WSASetLastError(-cqe->res);
-			else if (cqe->res == 0)
+			else if (cqe->res == 0) [[unlikely]]
 				WSASetLastError(ERROR_HANDLE_EOF);
 		}
 	};
@@ -882,7 +880,7 @@ IOCP_DECL BOOL WriteFile(
 {
 	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(hFile);
 
-	if (s->_iocp == nullptr && lpOverlapped)
+	if (s->_iocp == nullptr && lpOverlapped) [[unlikely]]
 	{
 		WSASetLastError(EOPNOTSUPP);
 		return false;
@@ -897,7 +895,7 @@ IOCP_DECL BOOL WriteFile(
 	{
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
-			if (cqe->res < 0)
+			if (cqe->res < 0) [[unlikely]]
 				WSASetLastError(-cqe->res);
 		}
 	};
