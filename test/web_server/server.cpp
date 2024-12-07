@@ -1,10 +1,12 @@
 /*
 * In the linker options (on the project right-click, linker, input) you need add wsock32.lib or ws2_32.lib to the list of input files.
 */
+#include <cstdio>
 #include <iostream>
 #include <string>
 #include <vector>
 #include <thread>
+#include <array>
 #include <time.h>
 
 #include "universal_async.hpp"
@@ -16,6 +18,8 @@
 #include <ws2tcpip.h>
 #include <mswsock.h>
 #include <winbase.h>
+
+LPFN_DISCONNECTEX DisconnectEx = nullptr;
 
 #define SOCKET_get_fd(s) (s)
 #define MSG_NOSIGNAL 0
@@ -95,6 +99,14 @@ struct auto_handle
 	auto_handle(HANDLE h) : _h(h){}
 	~auto_handle(){ CloseHandle(_h);}
 };
+
+struct auto_sockethandle
+{
+	SOCKET _s;
+	auto_sockethandle(SOCKET s) : _s(s){}
+	~auto_sockethandle(){ closesocket(_s);}
+};
+
 
 class response {
 public:
@@ -180,15 +192,14 @@ private:
 					printf("Error sending body, reconnecting...\n");
 					co_return -1;
 				}
-				else if (readLength <= 0)
-				{
-					printf("Read File Error, End The Program\n");
-					co_return readLength;
-				}
 
 				co_await wait_overlapped(ov);
 			}
 		}while(readLength > 0);
+
+		DisconnectEx(socket, &ov, 0, 0);
+		co_await wait_overlapped(ov);
+		printf("file sent successfull...\n");
 
 		co_return 1;
 	}
@@ -238,34 +249,23 @@ public:
 	SOCKET listenSocket6, listenSocket;
 	WSADATA windowsSocketData;
 	HANDLE eventQueue;
-	#ifndef _WIN32
 	std::array<HANDLE, 24> eventQueues;
-	#endif
 	DWORD recvBytes = 0, flags = 0;
 
 	void start() {
 		printf("Start.......\n");
 
-		int batch = 8;
-	#ifndef _WIN32
-			batch = eventQueues.size();
-	#endif
+		int batch = 8 * eventQueues.size();
 
 		for (int i=0; i < batch; i++)
 		{
-	#ifndef _WIN32
 			start_accept(listenSocket6, AF_INET6, eventQueues[i % eventQueues.size()]).detach();
 			start_accept(listenSocket, AF_INET, eventQueues[i % eventQueues.size()]).detach();
-	#else
-			start_accept(listenSocket6, AF_INET6, eventQueue).detach();
-			start_accept(listenSocket, AF_INET, eventQueue).detach();
-	#endif
 		}
 
-	#ifndef _WIN32
 		for (int i=0; i < eventQueues.size(); i++)
 			std::thread(&run_event_loop, eventQueues[i]).detach();
-	#endif
+
 		run_event_loop(eventQueue);
 	}
 
@@ -279,7 +279,18 @@ public:
 			DWORD out_size = 0;
 			AcceptEx(listen_sock, socket, outputbuffer, 0,sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &out_size, &ov);
 			auto accepted_size = co_await wait_overlapped(ov);
-			if (GetLastError() != ERROR_OPERATION_ABORTED)
+			auto err = GetLastError();
+			if (err == WSAECANCELLED || err == ERROR_OPERATION_ABORTED)
+			{
+				printf("requested quit, exiting accept loop\n");
+				break;
+			}
+			if ((err != ERROR_IO_PENDING) && err != 0) // other error, ignore and re accept
+			{
+				printf("accept errored %d\n", err);
+				break;
+			}
+			else
 			{
 				CreateIoCompletionPort((HANDLE)socket, binded_event_queue, 0, 0);
 				sockaddr* localaddr, *remoteaddr;
@@ -291,8 +302,6 @@ public:
 
 				handle_connection(socket, binded_event_queue).detach(binded_event_queue);
 			}
-			else
-				break;
 		}
 	}
 
@@ -305,7 +314,9 @@ public:
 
 		DWORD recvBytes = 0, flags = 0;
 
-		co_await run_on_iocp_thread(iocp);
+		// co_await run_on_iocp_thread(iocp);
+
+		auto_sockethandle auto_close(socket);
 
 		awaitable_overlapped ov;
  		WSARecv(socket, &wsaBuf,1, &recvBytes, &flags, &ov, NULL);
@@ -313,7 +324,6 @@ public:
 
 		request req = request(buffer, recv_bytes);
 		if (req.requestType < 0) {
-			closesocket(socket);
 			co_return;
 		}
 
@@ -322,7 +332,6 @@ public:
 		if (sentResult <= 0) {
 			printf("send error\n");
 		}
-		closesocket(socket);
 	}
 
 
@@ -336,14 +345,12 @@ public:
 		if (eventQueue == NULL)
 			errorHandle("IOCP create");
 
-#ifndef _WIN32
 		for (int i=0; i < eventQueues.size(); i ++)
 		{
 			eventQueues[i] = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
 			if (eventQueues[i] == NULL)
 				errorHandle("IOCP create");
 		}
-#endif
 
 		// Fill in the address structure
 		localSocketSetting6.sin6_port = htons(DEFAULT_PORT);
@@ -355,6 +362,13 @@ public:
 		listenSocket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
 		if (listenSocket == INVALID_SOCKET)
 			errorHandle("socket");
+
+		GUID disconnectex = WSAID_DISCONNECTEX;
+		DWORD BytesReturned;
+
+		WSAIoctl(listenSocket, SIO_GET_EXTENSION_FUNCTION_POINTER,
+			&disconnectex, sizeof(GUID), &DisconnectEx, sizeof(DisconnectEx), 
+			&BytesReturned, 0, 0);
 
 		if (CreateIoCompletionPort((HANDLE)listenSocket6, eventQueue, (ULONG_PTR)0, 0) == NULL)
 			errorHandle("IOCP bind socket6");
