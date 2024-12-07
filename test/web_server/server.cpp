@@ -250,12 +250,21 @@ public:
 	SOCKET listenSocket6, listenSocket;
 	WSADATA windowsSocketData;
 	HANDLE eventQueue;
+#ifndef DISABLE_THREADS
 	std::array<HANDLE, 24> eventQueues;
+#endif
 	DWORD recvBytes = 0, flags = 0;
 
 	void start() {
 		printf("Start.......\n");
 
+#ifdef DISABLE_THREADS
+		for (int i=0; i < 32; i++)
+		{
+			start_accept(listenSocket6, AF_INET6, eventQueue).detach();
+			start_accept(listenSocket, AF_INET, eventQueue).detach();
+		}
+#else
 		int batch = 8 * eventQueues.size();
 
 		for (int i=0; i < batch; i++)
@@ -266,6 +275,8 @@ public:
 
 		for (int i=0; i < eventQueues.size(); i++)
 			std::thread(&run_event_loop, eventQueues[i]).detach();
+
+#endif
 
 		run_event_loop(eventQueue);
 	}
@@ -347,14 +358,14 @@ public:
 		eventQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
 		if (eventQueue == NULL)
 			errorHandle("IOCP create");
-
+#ifndef DISABLE_THREADS
 		for (int i=0; i < eventQueues.size(); i ++)
 		{
 			eventQueues[i] = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
 			if (eventQueues[i] == NULL)
 				errorHandle("IOCP create");
 		}
-
+#endif
 		// Fill in the address structure
 		localSocketSetting6.sin6_port = htons(DEFAULT_PORT);
 		localSocketSetting.sin_port = htons(DEFAULT_PORT);
@@ -421,7 +432,7 @@ private:
 			CancelIo((HANDLE)listenSocket6);
 			closesocket(listenSocket6);
 
-#ifndef _WIN32
+#ifndef DISABLE_THREADS
 			for (HANDLE p : eventQueues)
 				exit_event_loop_when_empty(p);
 #endif
