@@ -46,8 +46,6 @@ IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(_In_ HANDLE FileHandle, _In_ HAND
 		iocphandle = ret;
 		io_uring_params params = {0};
 		params.flags = IORING_SETUP_CQSIZE|IORING_SETUP_SUBMIT_ALL|IORING_SETUP_TASKRUN_FLAG|IORING_SETUP_COOP_TASKRUN;
-		if (NumberOfConcurrentThreads == 1)
-			params.flags |= IORING_SETUP_SINGLE_ISSUER;
 
 		params.cq_entries = 65536;
 		params.sq_entries = 128;
@@ -272,7 +270,7 @@ IOCP_DECL SOCKET WSASocket(_In_ int af, _In_ int type, _In_ int protocol, _In_ L
 	{
 		type |= SOCK_CLOEXEC;
 	}
-	auto ret = new SOCKET_emu_class{::socket(af, type, protocol)};
+	auto ret = new SOCKET_emu_class{ (dwFlags & WSA_FLAG_FAKE_CREATION )  ? ::socket(af, type, protocol) : -1 };
 	return ret;
 }
 
@@ -339,7 +337,8 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 		}
 	};
 
-	close(sAcceptSocket->native_handle());
+	if (sAcceptSocket->_socket_fd != -1)
+		close(sAcceptSocket->native_handle());
 
 	io_uring_accept_op* op = io_uring_operation_allocator{}.allocate<io_uring_accept_op>();
 	op->overlapped_ptr = lpOverlapped;
