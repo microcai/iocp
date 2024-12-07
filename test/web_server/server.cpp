@@ -134,7 +134,7 @@ public:
 private:
 	string matchStr;
 	ucoro::awaitable<int> getFile(SOCKET& socket, string& route) {
-		string header = "HTTP/1.1 200 OK\r\nContent-Type: " + getContentType(route) + "; charset=UTF-8\r\n\r\n";
+		string header = "HTTP/1.1 200 OK\r\nContent-Type: " + getContentType(route) + "; charset=UTF-8\r\nConnection: close\r\n\r\n";
 		string path = route.substr(matchStr.length(), route.length());
 		string curFilePath = getCurFilePath();
 		string goalFilePth = curFilePath + path;
@@ -199,7 +199,7 @@ private:
 
 		DisconnectEx(socket, &ov, 0, 0);
 		co_await wait_overlapped(ov);
-		printf("file sent successfull...\n");
+		// printf("file sent successfull...\n");
 
 		co_return 1;
 	}
