@@ -11,7 +11,13 @@ typedef struct io_uring_operations
 	std::size_t size = 0;
 	LPOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine = nullptr;
 
-	virtual void do_complete(io_uring_cqe* cqe, DWORD*) {};
+	virtual void do_complete(io_uring_cqe* cqe, DWORD*)
+	{
+		if (cqe->res < 0) [[unlikely]]
+			WSASetLastError(-cqe->res);
+		else if (cqe->res == 0) [[unlikely]]
+			WSASetLastError(ERROR_HANDLE_EOF);
+	};
 	virtual ~io_uring_operations(){}
 
 }* io_uring_operation_ptr;

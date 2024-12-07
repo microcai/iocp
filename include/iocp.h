@@ -229,6 +229,13 @@ IOCP_DECL int WSARecvFrom(
     __in    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
 );
 
+IOCP_DECL BOOL DisconnectEx(
+  _In_ SOCKET       hSocket,
+  _In_ LPOVERLAPPED lpOverlapped,
+  _In_ DWORD        dwFlags,
+  _In_ DWORD        reserved
+);
+
 enum {
 	FD_CONNECT = 0x1,
 	FD_ACCEPT = 0x2,
@@ -237,7 +244,6 @@ enum {
 
 	FD_MAX_EVENTS = 5,
 };
-
 
 IOCP_DECL WSAEVENT WSACreateEvent();
 
@@ -290,6 +296,7 @@ enum
   WSAEINPROGRESS = EINPROGRESS,
   WSAEALREADY = EALREADY,
   WSAEMSGSIZE = EMSGSIZE,
+  WSAECANCELLED = ECANCELED,
 
   WSAENETDOWN = ENETDOWN,
   WSAENETUNREACH = ENETUNREACH,

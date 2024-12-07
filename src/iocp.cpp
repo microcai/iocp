@@ -683,6 +683,41 @@ IOCP_DECL int WSARecvFrom(
 	return SOCKET_ERROR;
 }
 
+IOCP_DECL BOOL DisconnectEx(
+  _In_ SOCKET       hSocket,
+  _In_ LPOVERLAPPED lpOverlapped,
+  _In_ DWORD        dwFlags,
+  _In_ DWORD        reserved)
+{
+	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(hSocket);
+
+	if (s->_iocp == nullptr && lpOverlapped)
+	{
+		WSASetLastError(EOPNOTSUPP);
+		return SOCKET_ERROR;
+	}
+
+	iocp_handle_emu_class* iocp = s->_iocp;
+
+	// *lpNumberOfBytesRecvd = 0;
+	assert(lpOverlapped);
+
+	// now, enter IOCP emul logic
+	io_uring_operations* op = io_uring_operation_allocator{}.allocate<io_uring_operations>();
+	op->overlapped_ptr = lpOverlapped;
+	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
+	op->CompletionKey = s->_completion_key;
+
+	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	{
+		io_uring_prep_shutdown(sqe, s->_socket_fd, SHUT_RDWR);
+		io_uring_sqe_set_data(sqe, op);
+	});
+
+	WSASetLastError(ERROR_IO_PENDING);
+	return SOCKET_ERROR;
+}
+
 void base_handle::unref()
 {
 	if (--ref_count == 0)
