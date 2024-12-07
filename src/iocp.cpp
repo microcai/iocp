@@ -30,14 +30,14 @@ SOCKET_emu_class::~SOCKET_emu_class()
 	});
 }
 
-IOCP_DECL BOOL WINAPI CloseHandle(__in HANDLE h)
+IOCP_DECL BOOL WINAPI CloseHandle(_In_ HANDLE h)
 {
 	h->unref();
 	return true;
 }
 
-IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(__in HANDLE FileHandle, __in HANDLE ExistingCompletionPort,
-											   __in ULONG_PTR CompletionKey, __in DWORD NumberOfConcurrentThreads)
+IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(_In_ HANDLE FileHandle, _In_ HANDLE ExistingCompletionPort,
+											   _In_ ULONG_PTR CompletionKey, _In_ DWORD NumberOfConcurrentThreads)
 {
 	HANDLE iocphandle = ExistingCompletionPort;
 	if (iocphandle == nullptr)
@@ -74,9 +74,9 @@ IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(__in HANDLE FileHandle, __in HAND
 	return iocphandle;
 }
 
-IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __out LPDWORD lpNumberOfBytes,
-												__out PULONG_PTR lpCompletionKey, __out LPOVERLAPPED* lpOverlapped,
-												__in DWORD dwMilliseconds)
+IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
+	_In_ HANDLE CompletionPort, _Out_ LPDWORD lpNumberOfBytes, _Out_ PULONG_PTR lpCompletionKey,
+	_Out_ LPOVERLAPPED* lpOverlapped, _In_ DWORD dwMilliseconds)
 {
 	struct iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(CompletionPort);
 	struct io_uring_cqe* cqe = nullptr;
@@ -360,13 +360,13 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 }
 
 IOCP_DECL BOOL WSAConnectEx(
-  __in            SOCKET socket_,
-  __in            const sockaddr *name,
-  __in            int namelen,
+  _In_            SOCKET socket_,
+  _In_            const sockaddr *name,
+  _In_            int namelen,
   _In_opt_        PVOID lpSendBuffer,
-  __in            DWORD dwSendDataLength,
-  __out           LPDWORD lpdwBytesSent,
-  __in            LPOVERLAPPED lpOverlapped)
+  _In_            DWORD dwSendDataLength,
+  _Out_           LPDWORD lpdwBytesSent,
+  _In_            LPOVERLAPPED lpOverlapped)
 {
 	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(socket_);
 
@@ -417,10 +417,10 @@ IOCP_DECL BOOL WSAConnectEx(
 	return false;
 }
 
-IOCP_DECL void GetAcceptExSockaddrs(__in PVOID lpOutputBuffer, __in DWORD dwReceiveDataLength,
-									__in DWORD dwLocalAddressLength, __in DWORD dwRemoteAddressLength,
-									__out sockaddr** LocalSockaddr, __out socklen_t* LocalSockaddrLength,
-									__out sockaddr** RemoteSockaddr, __out socklen_t* RemoteSockaddrLength)
+IOCP_DECL void GetAcceptExSockaddrs(_In_ PVOID lpOutputBuffer, _In_ DWORD dwReceiveDataLength,
+									_In_ DWORD dwLocalAddressLength, _In_ DWORD dwRemoteAddressLength,
+									_Out_ sockaddr** LocalSockaddr, _Out_ socklen_t* LocalSockaddrLength,
+									_Out_ sockaddr** RemoteSockaddr, _Out_ socklen_t* RemoteSockaddrLength)
 {
 	// lpOutputBuffer 的结构是
 	// [local_addr_length][local_addr][remote_addr_len][remote_addr]
@@ -552,15 +552,15 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 
 
 IOCP_DECL int WSASendTo(
-    __in    SOCKET                             socket_,
-    __in    LPWSABUF                           lpBuffers,
-    __in    DWORD                              dwBufferCount,
-    __out   LPDWORD                            lpNumberOfBytesSent,
-    __in    DWORD                              dwFlags,
-    __in    const sockaddr                     *lpTo,
-    __in    int                                iTolen,
-    __in    LPWSAOVERLAPPED                    lpOverlapped,
-    __in    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine)
+    _In_    SOCKET                             socket_,
+    _In_    LPWSABUF                           lpBuffers,
+    _In_    DWORD                              dwBufferCount,
+    _Out_   LPDWORD                            lpNumberOfBytesSent,
+    _In_    DWORD                              dwFlags,
+    _In_    const sockaddr                     *lpTo,
+    _In_    int                                iTolen,
+    _In_    LPWSAOVERLAPPED                    lpOverlapped,
+    _In_    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine)
 {
 	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(socket_);
 
@@ -615,15 +615,15 @@ IOCP_DECL int WSASendTo(
 }
 
 IOCP_DECL int WSARecvFrom(
-    __in    SOCKET                             socket_,
-    __in    LPWSABUF                           lpBuffers,
-    __in    DWORD                              dwBufferCount,
-    __out   LPDWORD                            lpNumberOfBytesRecvd,
-    __in    LPDWORD                            lpFlags,
-    __out   sockaddr                           *lpFrom,
-    __in    LPINT                              lpFromlen,
-    __in    LPWSAOVERLAPPED                    lpOverlapped,
-    __in    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine)
+    _In_    SOCKET                             socket_,
+    _In_    LPWSABUF                           lpBuffers,
+    _In_    DWORD                              dwBufferCount,
+    _Out_   LPDWORD                            lpNumberOfBytesRecvd,
+    _In_    LPDWORD                            lpFlags,
+    _Out_   sockaddr                           *lpFrom,
+    _In_    LPINT                              lpFromlen,
+    _In_    LPWSAOVERLAPPED                    lpOverlapped,
+    _In_    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine)
 {
 	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(socket_);
 
@@ -786,12 +786,12 @@ IOCP_DECL DWORD WSAGetLastError()
 ************************************************************************************/
 
 IOCP_DECL HANDLE CreateFileA(
-  __in            LPCSTR                lpFileName,
-  __in            DWORD                 dwDesiredAccess,
-  __in            DWORD                 dwShareMode,
+  _In_            LPCSTR                lpFileName,
+  _In_            DWORD                 dwDesiredAccess,
+  _In_            DWORD                 dwShareMode,
   _In_opt_        LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-  __in            DWORD                 dwCreationDisposition,
-  __in            DWORD                 dwFlagsAndAttributes,
+  _In_            DWORD                 dwCreationDisposition,
+  _In_            DWORD                 dwFlagsAndAttributes,
   _In_opt_        HANDLE                hTemplateFile
 )
 {
@@ -838,12 +838,12 @@ IOCP_DECL HANDLE CreateFileA(
 }
 
 IOCP_DECL HANDLE CreateFileW(
-  __in            LPCWSTR               lpFileName,
-  __in            DWORD                 dwDesiredAccess,
-  __in            DWORD                 dwShareMode,
+  _In_            LPCWSTR               lpFileName,
+  _In_            DWORD                 dwDesiredAccess,
+  _In_            DWORD                 dwShareMode,
   _In_opt_        LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-  __in            DWORD                 dwCreationDisposition,
-  __in            DWORD                 dwFlagsAndAttributes,
+  _In_            DWORD                 dwCreationDisposition,
+  _In_            DWORD                 dwFlagsAndAttributes,
   _In_opt_        HANDLE                hTemplateFile)
 {
 	// convert wstring back to string
@@ -857,9 +857,9 @@ IOCP_DECL HANDLE CreateFileW(
 }
 
 IOCP_DECL BOOL ReadFile(
-  __in                HANDLE       hFile,
-  __out               LPVOID       lpBuffer,
-  __in                DWORD        nNumberOfBytesToRead,
+  _In_                HANDLE       hFile,
+  _Out_               LPVOID       lpBuffer,
+  _In_                DWORD        nNumberOfBytesToRead,
   _Out_opt_	          LPDWORD      lpNumberOfBytesRead,
   _Inout_             LPOVERLAPPED lpOverlapped)
 {
@@ -907,9 +907,9 @@ IOCP_DECL BOOL ReadFile(
 }
 
 IOCP_DECL BOOL WriteFile(
-  __in                 HANDLE       hFile,
-  __in                 LPCVOID      lpBuffer,
-  __in                 DWORD        nNumberOfBytesToWrite,
+  _In_                 HANDLE       hFile,
+  _In_                 LPCVOID      lpBuffer,
+  _In_                 DWORD        nNumberOfBytesToWrite,
   _Out_opt_            LPDWORD      lpNumberOfBytesWritten,
   _Inout_              LPOVERLAPPED lpOverlapped)
 {
