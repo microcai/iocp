@@ -317,6 +317,7 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 				return;
 			}
 
+			WSASetLastError(0);
 			accept_into->_socket_fd = *lpNumberOfBytes;
 
 			getsockname(accept_into->_socket_fd, &local_addr, &local_addr_len);
@@ -395,6 +396,7 @@ IOCP_DECL BOOL WSAConnectEx(
 				if (lpNumberOfBytes && send_bytes > 0)
 					* lpNumberOfBytes = send_bytes;
 			}
+			WSASetLastError(0);
 		}
 	};
 
@@ -457,8 +459,10 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 		msghdr msg = {};
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
-			if (cqe->res < 0)
+			if (cqe->res < 0) [[unlikely]]
 				WSASetLastError(-cqe->res);
+			else [[likely]]
+				WSASetLastError(0);
 		}
 	};
 
@@ -483,7 +487,7 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 	{
 		if (total_send_bytes > 3000) [[unlikely]]
 			io_uring_prep_sendmsg_zc(sqe, s->_socket_fd, &op->msg, 0);
-		else
+		else [[likely]]
 			io_uring_prep_sendmsg(sqe, s->_socket_fd, &op->msg, 0);
 		io_uring_sqe_set_data(sqe, op);
 	});
@@ -520,6 +524,8 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 				WSASetLastError(-cqe->res);
 			else if (cqe->res == 0) [[unlikely]]
 				WSASetLastError(ERROR_HANDLE_EOF);
+			else [[likely]]
+				WSASetLastError(0);
 		}
 	};
 

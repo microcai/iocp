@@ -17,6 +17,8 @@ typedef struct io_uring_operations
 			WSASetLastError(-cqe->res);
 		else if (cqe->res == 0) [[unlikely]]
 			WSASetLastError(ERROR_HANDLE_EOF);
+		else [[likely]]
+			WSASetLastError(0);
 	};
 	virtual ~io_uring_operations(){}
 
