@@ -163,12 +163,12 @@ inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes)
 
 inline void run_event_loop(HANDLE iocp_handle)
 {
+    bool quit_if_no_work = false;
     for (;;)
     {
         DWORD NumberOfBytes;
         ULONG_PTR ipCompletionKey;
         LPOVERLAPPED ipOverlap = nullptr;
-        bool quit_if_no_work = false;
 
         DWORD dwMilliseconds_to_wait = quit_if_no_work ? ( pending_works() ? 500 : 0 ) : INFINITE;
         // get IO status
