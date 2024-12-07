@@ -166,7 +166,7 @@ inline void run_event_loop(HANDLE iocp_handle)
     for (;;)
     {
         DWORD NumberOfBytes;
-        ULONG_PTR ipCompletionKey;
+        ULONG_PTR ipCompletionKey = 0;
         LPOVERLAPPED ipOverlap = nullptr;
         bool quit_if_no_work = false;
 

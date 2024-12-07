@@ -4,7 +4,10 @@
 #include <mutex>
 #include <optional>
 #include <thread>
+#include <vector>
 #include <iostream>
+#include <deque>
+#include <boost/lockfree/queue.hpp>
 
 #include <liburing.h>
 
@@ -62,36 +65,144 @@ struct nullable_mutex
 
 };
 
+template <typename T>
+struct concurrent_pool
+{
+	concurrent_pool(T* pool, int size)
+	{}
+
+	T* take();
+	T  giveback();
+
+	std::deque<T> free_items;
+
+};
+
+struct wrapped_io_uring : public io_uring
+{
+	std::mutex mutex;
+};
+
+template<typename T>
+concept prepare_has_two_arg = requires(T t, io_uring_sqe* sqe, wrapped_io_uring* ring)
+{
+	t(sqe, ring);
+};
+
 struct iocp_handle_emu_class final : public base_handle
 {
-	::io_uring ring_ = { 0 };
-	mutable nullable_mutex submit_mutex;
-	mutable nullable_mutex wait_mutex;
+	std::mutex mutex;
+	std::deque<wrapped_io_uring> rings_;
+
+	boost::lockfree::queue<wrapped_io_uring*> submit_queue;
+
+	template<typename T>
+	struct auto_push
+	{
+		boost::lockfree::queue<T*>& lock_free_queue;
+		T* to_be_push;
+		~auto_push()
+		{
+			while(!lock_free_queue.push(to_be_push))
+				std::this_thread::yield();
+		}
+
+		auto_push(boost::lockfree::queue<T*>& lock_free_queue, T* to_be_push)
+			: lock_free_queue(lock_free_queue)
+			, to_be_push(to_be_push)
+		{}
+	};
 
 	iocp_handle_emu_class(int NumberOfConcurrentThreads)
-		: submit_mutex(NumberOfConcurrentThreads)
-		, wait_mutex(NumberOfConcurrentThreads)
+		: submit_queue(NumberOfConcurrentThreads)
 	{
-		ring_.ring_fd = -1;
+		submit_queue.push(create_new_ring());
 	}
 
 	~iocp_handle_emu_class()
 	{
-		if (ring_.ring_fd != -1)
-			io_uring_queue_exit(&ring_);
+		for (auto & ring_ : rings_)
+		{
+			::io_uring_queue_exit(&ring_);
+		}
+	}
+
+	wrapped_io_uring* create_new_ring()
+	{
+		std::scoped_lock<std::mutex> l(mutex);
+
+		io_uring_params params = {0};
+		params.flags = IORING_SETUP_CQSIZE|IORING_SETUP_SUBMIT_ALL|IORING_SETUP_TASKRUN_FLAG|IORING_SETUP_COOP_TASKRUN;
+
+		params.cq_entries = 65536;
+		params.sq_entries = 128;
+		// params.features = IORING_FEAT_EXT_ARG;
+		params.features = IORING_FEAT_NODROP | IORING_FEAT_EXT_ARG | IORING_FEAT_FAST_POLL | IORING_FEAT_RW_CUR_POS |IORING_FEAT_CUR_PERSONALITY;
+
+		rings_.emplace_back();
+
+		auto result = ::io_uring_queue_init_params(128, & rings_.back(), &params);
+		if (result < 0)
+		{
+			rings_.pop_back();
+			throw std::bad_alloc{};
+		}
+
+		return  & rings_.back();
+	}
+
+	template<typename PrepareOP> auto __submit_io(PrepareOP&& preparer, wrapped_io_uring* ring_)
+	{
+		std::scoped_lock<std::mutex> l(ring_->mutex);
+
+		io_uring_sqe * sqe = io_uring_get_sqe(ring_);
+		while (!sqe)
+		{
+			io_uring_submit(ring_);
+			sqe = io_uring_get_sqe(ring_);
+		}
+		if constexpr (prepare_has_two_arg<PrepareOP>)
+		{
+			preparer(sqe, ring_);
+		}
+		else
+			preparer(sqe);
+		return io_uring_submit(ring_);
+	}
+
+	template<typename PrepareOP> auto submit_io(PrepareOP&& preparer, wrapped_io_uring* suggest_ring)
+	{
+		if (suggest_ring == nullptr)
+		{
+			// peak a ring, and then post IO there.
+			wrapped_io_uring* ring_ = nullptr;
+			while(!submit_queue.pop(ring_))
+			{
+				std::this_thread::yield();
+			}
+
+			auto_push<wrapped_io_uring> _auto_push(submit_queue, ring_);
+
+			return __submit_io(std::forward<PrepareOP>(preparer), ring_);
+		}
+		else
+		{
+			return __submit_io(std::forward<PrepareOP>(preparer), suggest_ring);
+		}
 	}
 
 	template<typename PrepareOP> auto submit_io(PrepareOP&& preparer)
 	{
-		std::scoped_lock<nullable_mutex> l(submit_mutex);
-		io_uring_sqe * sqe = io_uring_get_sqe(&ring_);
-		while (!sqe)
+		// peak a ring, and then post IO there.
+		wrapped_io_uring* ring_ = nullptr;
+		while(!submit_queue.pop(ring_))
 		{
-			io_uring_submit(&ring_);
-			sqe = io_uring_get_sqe(&ring_);
+			std::this_thread::yield();
 		}
-		preparer(sqe);
-		return io_uring_submit(&ring_);
+
+		auto_push<wrapped_io_uring> _auto_push(submit_queue, ring_);
+
+		return __submit_io(std::forward<PrepareOP>(preparer), ring_);
 	}
 };
 
@@ -99,6 +210,7 @@ struct SOCKET_emu_class final : public base_handle
 {
 	iocp_handle_emu_class* _iocp;
 	ULONG_PTR _completion_key;
+	wrapped_io_uring* binded_ring = nullptr;
 
 	SOCKET_emu_class(int fd, iocp_handle_emu_class* iocp = nullptr)
 	 	: base_handle(fd)

@@ -19,7 +19,7 @@
 
 #include "io_uring_operation_allocator.hpp"
 
-#define IORING_CQE_F_USER 32
+#define IORING_CQE_F_USER 304
 
 SOCKET_emu_class::~SOCKET_emu_class()
 {
@@ -30,65 +30,79 @@ SOCKET_emu_class::~SOCKET_emu_class()
 	});
 }
 
-IOCP_DECL BOOL WINAPI CloseHandle(__in HANDLE h)
+IOCP_DECL BOOL WINAPI CloseHandle(_Out_ HANDLE h)
 {
 	h->unref();
 	return true;
 }
 
-IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(__in HANDLE FileHandle, __in HANDLE ExistingCompletionPort,
-											   __in ULONG_PTR CompletionKey, __in DWORD NumberOfConcurrentThreads)
+IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(_In_ HANDLE FileHandle, _In_ HANDLE ExistingCompletionPort,
+											   _In_ ULONG_PTR CompletionKey, _In_ DWORD NumberOfConcurrentThreads)
 {
 	HANDLE iocphandle = ExistingCompletionPort;
 	if (iocphandle == nullptr)
+	try
 	{
+		if (NumberOfConcurrentThreads == 0)
+			NumberOfConcurrentThreads = std::thread::hardware_concurrency();
+
 		iocp_handle_emu_class* ret = new iocp_handle_emu_class{static_cast<int>(NumberOfConcurrentThreads)};
 		iocphandle = ret;
-		io_uring_params params = {0};
-		params.flags = IORING_SETUP_CQSIZE|IORING_SETUP_SUBMIT_ALL|IORING_SETUP_TASKRUN_FLAG|IORING_SETUP_COOP_TASKRUN;
-		if (NumberOfConcurrentThreads == 1)
-			params.flags |= IORING_SETUP_SINGLE_ISSUER;
-
-		params.cq_entries = 65536;
-		params.sq_entries = 128;
-		// params.features = IORING_FEAT_EXT_ARG;
-		params.features = IORING_FEAT_NODROP | IORING_FEAT_EXT_ARG | IORING_FEAT_FAST_POLL | IORING_FEAT_RW_CUR_POS |IORING_FEAT_CUR_PERSONALITY;
-		auto result = io_uring_queue_init_params(128, &ret->ring_, &params);
-		// auto result = io_uring_queue_init(16384, &ret->ring_, IORING_SETUP_SQPOLL|IORING_SETUP_CLAMP);
-		ret->_socket_fd = ret->ring_.ring_fd;
-
-		if (result < 0)
-		{
-			delete ret;
-			WSASetLastError(-result);
-			return INVALID_HANDLE_VALUE;
-		}
+	}
+	catch(std::exception&e)
+	{
+		return nullptr;
 	}
 
 	if (FileHandle != INVALID_HANDLE_VALUE)
 	{
 		dynamic_cast<SOCKET_emu_class*>(FileHandle)->_completion_key = CompletionKey;
-		dynamic_cast<SOCKET_emu_class*>(FileHandle)->_iocp = dynamic_cast<iocp_handle_emu_class*>(iocphandle);
+		dynamic_cast<SOCKET_emu_class*>(FileHandle)->_iocp = static_cast<iocp_handle_emu_class*>(iocphandle);
 	}
 
 	return iocphandle;
 }
 
-IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __out LPDWORD lpNumberOfBytes,
-												__out PULONG_PTR lpCompletionKey, __out LPOVERLAPPED* lpOverlapped,
-												__in DWORD dwMilliseconds)
+IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(_In_ HANDLE CompletionPort, _Out_ LPDWORD lpNumberOfBytes,
+												_Out_ PULONG_PTR lpCompletionKey, _Out_ LPOVERLAPPED* lpOverlapped,
+												_In_ DWORD dwMilliseconds)
 {
 	struct iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(CompletionPort);
 	struct io_uring_cqe* cqe = nullptr;
 	struct __kernel_timespec ts = {.tv_sec = dwMilliseconds / 1000, .tv_nsec = dwMilliseconds % 1000 * 1000000};
+	struct __kernel_timespec round_robin_perid = {.tv_sec =  0, .tv_nsec = 500 * 1000000};
+
 	*lpOverlapped = nullptr;
+
+	static thread_local iocp_handle_emu_class* binded_iocp = nullptr;
+	static thread_local wrapped_io_uring* binded_iouring = nullptr;
+
+	if (binded_iocp != iocp)
+	{
+		binded_iouring = nullptr;
+		binded_iocp = iocp;
+	}
 
 	while (1)
 	{
 		io_uring_operation_ptr op = nullptr;
 		{
-			std::scoped_lock<nullable_mutex> l(iocp->wait_mutex);
-			auto io_uring_ret = io_uring_wait_cqe_timeout(&iocp->ring_, &cqe, dwMilliseconds == UINT32_MAX ? nullptr : &ts);
+			wrapped_io_uring* ring_ = nullptr;
+
+			if (!binded_iouring)
+			{
+				std::scoped_lock<std::mutex> l (binded_iocp->mutex);
+
+				ring_ = iocp->create_new_ring();
+
+				iocp->submit_queue.push(ring_);
+
+				binded_iouring = ring_;
+			}
+
+			std::scoped_lock<std::mutex> l (binded_iocp->mutex);
+
+			auto io_uring_ret = io_uring_wait_cqe_timeout(binded_iouring, &cqe, (dwMilliseconds < 500) ? &ts : &round_robin_perid);
 
 			// auto io_uring_ret =
 			// 	io_uring_submit_and_wait_timeout(&iocp->ring_, &cqe, 1,  dwMilliseconds == UINT32_MAX ? nullptr : &ts, nullptr);
@@ -99,12 +113,17 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 				{
 					continue;
 				}
+
+				if (dwMilliseconds == INFINITE)
+				{
+					continue;
+				}
 				// timeout
 				WSASetLastError(ERROR_WAIT_TIMEOUT);
 				return false;
 			}
 
-			if (io_uring_cq_has_overflow(&(iocp->ring_))) [[unlikely]]
+			if (io_uring_cq_has_overflow(ring_)) [[unlikely]]
 			{
 				std::cerr << "uring completion queue overflow!" << std::endl;
 				std::terminate();
@@ -114,7 +133,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 			op = reinterpret_cast<io_uring_operation_ptr>(io_uring_cqe_get_data(cqe));
 			if (!op) [[unlikely]]
 			{
-				io_uring_cqe_seen(&iocp->ring_, cqe);
+				io_uring_cqe_seen(ring_, cqe);
 				if (dwMilliseconds == UINT32_MAX)
 				{
 					continue;
@@ -131,18 +150,18 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 			if (cqe->flags & IORING_CQE_F_MORE) [[unlikely]]
 			{
 				op->do_complete(cqe, lpNumberOfBytes);
-				io_uring_cqe_seen(&iocp->ring_, cqe);
+				io_uring_cqe_seen(ring_, cqe);
 				continue;
 			}
-			else if (uring_unlikely(cqe->flags & IORING_CQE_F_NOTIF)) [[unlikely]]
+			else if (cqe->flags & IORING_CQE_F_NOTIF) [[unlikely]]
 			{
 			}
-			else if (uring_unlikely(cqe->flags == IORING_CQE_F_USER)) [[unlikely]]
+			else if (cqe->flags == IORING_CQE_F_USER) [[unlikely]]
 			{
 				*lpCompletionKey = op->CompletionKey;
 				*lpOverlapped = op->overlapped_ptr;
 				op->do_complete(cqe, 0);
-				io_uring_cqe_seen(&iocp->ring_, cqe);
+				io_uring_cqe_seen(ring_, cqe);
 				return true;
 			}
 			else [[likely]]
@@ -150,7 +169,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __ou
 				op->do_complete(cqe, lpNumberOfBytes);
 			}
 
-			io_uring_cqe_seen(&iocp->ring_, cqe);
+			io_uring_cqe_seen(ring_, cqe);
 		}
 
 		*lpCompletionKey = op->CompletionKey;
@@ -197,9 +216,9 @@ IOCP_DECL BOOL WINAPI PostQueuedCompletionStatus(
 	op->overlapped_ptr = lpOverlapped;
 	op->CompletionKey = dwCompletionKey;
 
-	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	iocp->submit_io([&](struct io_uring_sqe* sqe, io_uring* ring)
 	{
-		io_uring_prep_msg_ring_cqe_flags(sqe, iocp->ring_.ring_fd, dwNumberOfBytesTransferred, (__u64) op, 0, IORING_CQE_F_USER);
+		io_uring_prep_msg_ring_cqe_flags(sqe, ring->ring_fd, dwNumberOfBytesTransferred, (__u64) op, 0, IORING_CQE_F_USER);
 		io_uring_sqe_set_data(sqe, op);
 	});
 
@@ -349,24 +368,25 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 	op->CompletionKey = listen_sock->_completion_key;
 	op->lpOutputBuffer = lpOutputBuffer;
 
-	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	iocp->submit_io([&](struct io_uring_sqe* sqe, auto* ring_)
 	{
+		listen_sock->binded_ring = ring_;
 		io_uring_prep_accept(sqe, listen_sock->_socket_fd, &(op->remote_addr), &(op->remote_addr_len), 0);
 		io_uring_sqe_set_data(sqe, op);
-	});
+	}, listen_sock->binded_ring);
 
 	WSASetLastError(ERROR_IO_PENDING);
 	return false;
 }
 
 IOCP_DECL BOOL WSAConnectEx(
-  __in            SOCKET socket_,
-  __in            const sockaddr *name,
-  __in            int namelen,
+  _In_            SOCKET socket_,
+  _In_            const sockaddr *name,
+  _In_            int namelen,
   _In_opt_        PVOID lpSendBuffer,
-  __in            DWORD dwSendDataLength,
-  __out           LPDWORD lpdwBytesSent,
-  __in            LPOVERLAPPED lpOverlapped)
+  _In_            DWORD dwSendDataLength,
+  _Out_           LPDWORD lpdwBytesSent,
+  _In_            LPOVERLAPPED lpOverlapped)
 {
 	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(socket_);
 
@@ -417,10 +437,10 @@ IOCP_DECL BOOL WSAConnectEx(
 	return false;
 }
 
-IOCP_DECL void GetAcceptExSockaddrs(__in PVOID lpOutputBuffer, __in DWORD dwReceiveDataLength,
-									__in DWORD dwLocalAddressLength, __in DWORD dwRemoteAddressLength,
-									__out sockaddr** LocalSockaddr, __out socklen_t* LocalSockaddrLength,
-									__out sockaddr** RemoteSockaddr, __out socklen_t* RemoteSockaddrLength)
+IOCP_DECL void GetAcceptExSockaddrs(_In_ PVOID lpOutputBuffer, _In_ DWORD dwReceiveDataLength,
+									_In_ DWORD dwLocalAddressLength, _In_ DWORD dwRemoteAddressLength,
+									_Out_ sockaddr** LocalSockaddr, _Out_ socklen_t* LocalSockaddrLength,
+									_Out_ sockaddr** RemoteSockaddr, _Out_ socklen_t* RemoteSockaddrLength)
 {
 	// lpOutputBuffer 的结构是
 	// [local_addr_length][local_addr][remote_addr_len][remote_addr]
@@ -480,14 +500,15 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 		total_send_bytes += lpBuffers[i].len;
 	}
 
-	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	iocp->submit_io([&](struct io_uring_sqe* sqe, auto* ring_)
 	{
+		s->binded_ring = ring_;
 		if (total_send_bytes > 3000) [[unlikely]]
 			io_uring_prep_sendmsg_zc(sqe, s->_socket_fd, &op->msg, 0);
 		else
 			io_uring_prep_sendmsg(sqe, s->_socket_fd, &op->msg, 0);
 		io_uring_sqe_set_data(sqe, op);
-	});
+	}, s->binded_ring);
 
 	WSASetLastError(ERROR_IO_PENDING);
 	return SOCKET_ERROR;
@@ -540,11 +561,12 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 		op->msg_iov[i].iov_len = lpBuffers[i].len;
 	}
 
-	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	iocp->submit_io([&](struct io_uring_sqe* sqe, auto* ring_)
 	{
+		s->binded_ring = ring_;
 		io_uring_prep_recvmsg(sqe, s->_socket_fd, &(op->msg), 0);
 		io_uring_sqe_set_data(sqe, op);
-	});
+	}, s->binded_ring);
 
 	WSASetLastError(ERROR_IO_PENDING);
 	return SOCKET_ERROR;
@@ -552,15 +574,15 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 
 
 IOCP_DECL int WSASendTo(
-    __in    SOCKET                             socket_,
-    __in    LPWSABUF                           lpBuffers,
-    __in    DWORD                              dwBufferCount,
-    __out   LPDWORD                            lpNumberOfBytesSent,
-    __in    DWORD                              dwFlags,
-    __in    const sockaddr                     *lpTo,
-    __in    int                                iTolen,
-    __in    LPWSAOVERLAPPED                    lpOverlapped,
-    __in    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine)
+    _In_    SOCKET                             socket_,
+    _In_    LPWSABUF                           lpBuffers,
+    _In_    DWORD                              dwBufferCount,
+    _Out_   LPDWORD                            lpNumberOfBytesSent,
+    _In_    DWORD                              dwFlags,
+    _In_    const sockaddr                     *lpTo,
+    _In_    int                                iTolen,
+    _In_    LPWSAOVERLAPPED                    lpOverlapped,
+    _In_    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine)
 {
 	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(socket_);
 
@@ -615,15 +637,15 @@ IOCP_DECL int WSASendTo(
 }
 
 IOCP_DECL int WSARecvFrom(
-    __in    SOCKET                             socket_,
-    __in    LPWSABUF                           lpBuffers,
-    __in    DWORD                              dwBufferCount,
-    __out   LPDWORD                            lpNumberOfBytesRecvd,
-    __in    LPDWORD                            lpFlags,
-    __out   sockaddr                           *lpFrom,
-    __in    LPINT                              lpFromlen,
-    __in    LPWSAOVERLAPPED                    lpOverlapped,
-    __in    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine)
+    _In_    SOCKET                             socket_,
+    _In_    LPWSABUF                           lpBuffers,
+    _In_    DWORD                              dwBufferCount,
+    _Out_   LPDWORD                            lpNumberOfBytesRecvd,
+    _In_    LPDWORD                            lpFlags,
+    _Out_   sockaddr                           *lpFrom,
+    _In_    LPINT                              lpFromlen,
+    _In_    LPWSAOVERLAPPED                    lpOverlapped,
+    _In_    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine)
 {
 	SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(socket_);
 
@@ -751,12 +773,12 @@ IOCP_DECL DWORD WSAGetLastError()
 ************************************************************************************/
 
 IOCP_DECL HANDLE CreateFileA(
-  __in            LPCSTR                lpFileName,
-  __in            DWORD                 dwDesiredAccess,
-  __in            DWORD                 dwShareMode,
+  _In_            LPCSTR                lpFileName,
+  _In_            DWORD                 dwDesiredAccess,
+  _In_            DWORD                 dwShareMode,
   _In_opt_        LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-  __in            DWORD                 dwCreationDisposition,
-  __in            DWORD                 dwFlagsAndAttributes,
+  _In_            DWORD                 dwCreationDisposition,
+  _In_            DWORD                 dwFlagsAndAttributes,
   _In_opt_        HANDLE                hTemplateFile
 )
 {
@@ -803,12 +825,12 @@ IOCP_DECL HANDLE CreateFileA(
 }
 
 IOCP_DECL HANDLE CreateFileW(
-  __in            LPCWSTR               lpFileName,
-  __in            DWORD                 dwDesiredAccess,
-  __in            DWORD                 dwShareMode,
+  _In_            LPCWSTR               lpFileName,
+  _In_            DWORD                 dwDesiredAccess,
+  _In_            DWORD                 dwShareMode,
   _In_opt_        LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-  __in            DWORD                 dwCreationDisposition,
-  __in            DWORD                 dwFlagsAndAttributes,
+  _In_            DWORD                 dwCreationDisposition,
+  _In_            DWORD                 dwFlagsAndAttributes,
   _In_opt_        HANDLE                hTemplateFile)
 {
 	// convert wstring back to string
@@ -822,9 +844,9 @@ IOCP_DECL HANDLE CreateFileW(
 }
 
 IOCP_DECL BOOL ReadFile(
-  __in                HANDLE       hFile,
-  __out               LPVOID       lpBuffer,
-  __in                DWORD        nNumberOfBytesToRead,
+  _In_                HANDLE       hFile,
+  _Out_               LPVOID       lpBuffer,
+  _In_                DWORD        nNumberOfBytesToRead,
   _Out_opt_	          LPDWORD      lpNumberOfBytesRead,
   _Inout_             LPOVERLAPPED lpOverlapped)
 {
@@ -872,9 +894,9 @@ IOCP_DECL BOOL ReadFile(
 }
 
 IOCP_DECL BOOL WriteFile(
-  __in                 HANDLE       hFile,
-  __in                 LPCVOID      lpBuffer,
-  __in                 DWORD        nNumberOfBytesToWrite,
+  _In_                 HANDLE       hFile,
+  _In_                 LPCVOID      lpBuffer,
+  _In_                 DWORD        nNumberOfBytesToWrite,
   _Out_opt_            LPDWORD      lpNumberOfBytesWritten,
   _Inout_              LPOVERLAPPED lpOverlapped)
 {

@@ -47,11 +47,11 @@ IOCP_DECL int WSAEventSelect(
 }
 
 IOCP_DECL DWORD WSAWaitForMultipleEvents(
-  __in DWORD          cEvents,
-  __in const WSAEVENT *lphEvents,
-  __in BOOL           fWaitAll,
-  __in DWORD          dwTimeout,
-  __in BOOL           fAlertable)
+  _In_ DWORD          cEvents,
+  _In_ const WSAEVENT *lphEvents,
+  _In_ BOOL           fWaitAll,
+  _In_ DWORD          dwTimeout,
+  _In_ BOOL           fAlertable)
 {
     // std::vector<pollfd> fds{cEvents};
 
@@ -86,9 +86,9 @@ IOCP_DECL DWORD WSAWaitForMultipleEvents(
 }
 
 IOCP_DECL int WSAEnumNetworkEvents(
-  __in  SOCKET             s,
-  __in  WSAEVENT           hEventObject,
-  __out LPWSANETWORKEVENTS lpNetworkEvents)
+  _In_  SOCKET             s,
+  _In_  WSAEVENT           hEventObject,
+  _Out_ LPWSANETWORKEVENTS lpNetworkEvents)
 {
     epoll_event ev;
     epoll_wait(hEventObject->native_handle(), &ev, 1, -1);

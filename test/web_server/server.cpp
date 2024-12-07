@@ -238,7 +238,7 @@ public:
 	SOCKET listenSocket6, listenSocket;
 	WSADATA windowsSocketData;
 	HANDLE eventQueue;
-	#ifndef _WIN32
+	#ifdef MULTI_IOCP
 	std::array<HANDLE, 24> eventQueues;
 	#endif
 	DWORD recvBytes = 0, flags = 0;
@@ -246,26 +246,26 @@ public:
 	void start() {
 		printf("Start.......\n");
 
-		int batch = 8;
-	#ifndef _WIN32
+		for (int i=0; i < 15; i++)
+			std::thread(&run_event_loop, eventQueue).detach();
+
+		int batch = 8 * std::thread::hardware_concurrency();
+	#ifdef MULTI_IOCP
 			batch = eventQueues.size();
 	#endif
 
-		for (int i=0; i < batch; i++)
+		for (int i=0; i < batch ; i++)
 		{
-	#ifndef _WIN32
+	#ifdef MULTI_IOCP
 			start_accept(listenSocket6, AF_INET6, eventQueues[i % eventQueues.size()]).detach();
 			start_accept(listenSocket, AF_INET, eventQueues[i % eventQueues.size()]).detach();
 	#else
 			start_accept(listenSocket6, AF_INET6, eventQueue).detach();
-			start_accept(listenSocket, AF_INET, eventQueues).detach();
+			start_accept(listenSocket, AF_INET, eventQueue).detach();
 	#endif
 		}
 
-	#ifndef _WIN32
-		for (int i=0; i < eventQueues.size(); i++)
-			std::thread(&run_event_loop, eventQueues[i]).detach();
-	#endif
+
 		run_event_loop(eventQueue);
 	}
 
@@ -305,7 +305,7 @@ public:
 
 		DWORD recvBytes = 0, flags = 0;
 
-		co_await run_on_iocp_thread(iocp);
+		// co_await run_on_iocp_thread(iocp);
 
 		awaitable_overlapped ov;
  		WSARecv(socket, &wsaBuf,1, &recvBytes, &flags, &ov, NULL);
@@ -336,7 +336,7 @@ public:
 		if (eventQueue == NULL)
 			errorHandle("IOCP create");
 
-#ifndef _WIN32
+#ifdef MULTI_IOCP
 		for (int i=0; i < eventQueues.size(); i ++)
 		{
 			eventQueues[i] = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
@@ -403,7 +403,7 @@ private:
 			CancelIo(listenSocket6);
 			closesocket(listenSocket6);
 
-#ifndef _WIN32
+#ifdef MULTI_IOCP
 			for (HANDLE p : eventQueues)
 				exit_event_loop_when_empty(p);
 #endif

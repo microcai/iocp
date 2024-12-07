@@ -15,19 +15,12 @@
 
 #define WINAPI
 
-#ifndef __in
-#define __in
-#endif
 #ifndef _In_
 #define _In_
 #endif
 
 #ifndef _In_opt_
 #define _In_opt_
-#endif
-
-#ifndef __out
-#define __out
 #endif
 
 #ifndef _Out_
@@ -92,16 +85,16 @@ typedef struct _OVERLAPPED
 } OVERLAPPED, *LPOVERLAPPED, WSAOVERLAPPED, *LPWSAOVERLAPPED;
 
 
-IOCP_DECL BOOL WINAPI CloseHandle(__in HANDLE);
+IOCP_DECL BOOL WINAPI CloseHandle(_In_ HANDLE);
 
-IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(__in HANDLE FileHandle, __in HANDLE ExistingCompletionPort,
-											   __in ULONG_PTR CompletionKey, __in DWORD NumberOfConcurrentThreads
+IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(_In_ HANDLE FileHandle, _In_ HANDLE ExistingCompletionPort,
+											   _In_ ULONG_PTR CompletionKey, _In_ DWORD NumberOfConcurrentThreads
 
 );
 
-IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(__in HANDLE CompletionPort, __out LPDWORD lpNumberOfBytes,
-												__out PULONG_PTR lpCompletionKey, __out LPOVERLAPPED* lpOverlapped,
-												__in DWORD dwMilliseconds);
+IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(_In_ HANDLE CompletionPort, _Out_ LPDWORD lpNumberOfBytes,
+												_Out_ PULONG_PTR lpCompletionKey, _Out_ LPOVERLAPPED* lpOverlapped,
+												_In_ DWORD dwMilliseconds);
 
 IOCP_DECL BOOL WINAPI PostQueuedCompletionStatus(
   _In_     HANDLE       CompletionPort,
@@ -161,24 +154,24 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 						_In_ LPOVERLAPPED lpOverlapped);
 
 IOCP_DECL BOOL WSAConnectEx(
-  __in            SOCKET s,
-  __in            const sockaddr *name,
-  __in            int namelen,
+  _In_            SOCKET s,
+  _In_            const sockaddr *name,
+  _In_            int namelen,
   _In_opt_        PVOID lpSendBuffer,
-  __in            DWORD dwSendDataLength,
-  __out           LPDWORD lpdwBytesSent,
-  __in            LPOVERLAPPED lpOverlapped
+  _In_            DWORD dwSendDataLength,
+  _Out_           LPDWORD lpdwBytesSent,
+  _In_            LPOVERLAPPED lpOverlapped
 );
 
 IOCP_DECL void GetAcceptExSockaddrs(
-  __in  PVOID      lpOutputBuffer,
-  __in  DWORD      dwReceiveDataLength,
-  __in  DWORD      dwLocalAddressLength,
-  __in  DWORD      dwRemoteAddressLength,
-  __out sockaddr** LocalSockaddr,
-  __out socklen_t* LocalSockaddrLength,
-  __out sockaddr** RemoteSockaddr,
-  __out socklen_t* RemoteSockaddrLength
+  _In_  PVOID      lpOutputBuffer,
+  _In_  DWORD      dwReceiveDataLength,
+  _In_  DWORD      dwLocalAddressLength,
+  _In_  DWORD      dwRemoteAddressLength,
+  _Out_ sockaddr** LocalSockaddr,
+  _Out_ socklen_t* LocalSockaddrLength,
+  _Out_ sockaddr** RemoteSockaddr,
+  _Out_ socklen_t* RemoteSockaddrLength
 );
 
 typedef struct __WSABUF
@@ -188,8 +181,8 @@ typedef struct __WSABUF
 } WSABUF, *LPWSABUF;
 
 typedef void (*LPOVERLAPPED_COMPLETION_ROUTINE)(
-  __in  DWORD dwErrorCode,
-  __in  DWORD dwNumberOfBytesTransfered,
+  _In_  DWORD dwErrorCode,
+  _In_  DWORD dwNumberOfBytesTransfered,
   _Inout_  LPOVERLAPPED lpOverlapped
 );
 
@@ -206,27 +199,27 @@ IOCP_DECL int WSARecv(_In_ SOCKET s, _Inout_ LPWSABUF lpBuffers, _In_ DWORD dwBu
 );
 
 IOCP_DECL int WSASendTo(
-    __in    SOCKET                             s,
-    __in    LPWSABUF                           lpBuffers,
-    __in    DWORD                              dwBufferCount,
-    __out   LPDWORD                            lpNumberOfBytesSent,
-    __in    DWORD                              dwFlags,
-    __in    const sockaddr                     *lpTo,
-    __in    int                                iTolen,
-    __in    LPWSAOVERLAPPED                    lpOverlapped,
-    __in    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
+    _In_    SOCKET                             s,
+    _In_    LPWSABUF                           lpBuffers,
+    _In_    DWORD                              dwBufferCount,
+    _Out_   LPDWORD                            lpNumberOfBytesSent,
+    _In_    DWORD                              dwFlags,
+    _In_    const sockaddr                     *lpTo,
+    _In_    int                                iTolen,
+    _In_    LPWSAOVERLAPPED                    lpOverlapped,
+    _In_    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
 );
 
 IOCP_DECL int WSARecvFrom(
-    __in    SOCKET                             s,
-    __in    LPWSABUF                           lpBuffers,
-    __in    DWORD                              dwBufferCount,
-    __out   LPDWORD                            lpNumberOfBytesRecvd,
-    __in    LPDWORD                            lpFlags,
-    __out   sockaddr                           *lpFrom,
-    __in    LPINT                              lpFromlen,
-    __in    LPWSAOVERLAPPED                    lpOverlapped,
-    __in    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
+    _In_    SOCKET                             s,
+    _In_    LPWSABUF                           lpBuffers,
+    _In_    DWORD                              dwBufferCount,
+    _Out_   LPDWORD                            lpNumberOfBytesRecvd,
+    _In_    LPDWORD                            lpFlags,
+    _Out_   sockaddr                           *lpFrom,
+    _In_    LPINT                              lpFromlen,
+    _In_    LPWSAOVERLAPPED                    lpOverlapped,
+    _In_    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
 );
 
 enum {
@@ -248,11 +241,11 @@ IOCP_DECL int WSAEventSelect(
 );
 
 IOCP_DECL DWORD WSAWaitForMultipleEvents(
-  __in DWORD          cEvents,
-  __in const WSAEVENT *lphEvents,
-  __in BOOL           fWaitAll,
-  __in DWORD          dwTimeout,
-  __in BOOL           fAlertable
+  _In_ DWORD          cEvents,
+  _In_ const WSAEVENT *lphEvents,
+  _In_ BOOL           fWaitAll,
+  _In_ DWORD          dwTimeout,
+  _In_ BOOL           fAlertable
 );
 
 typedef struct _WSANETWORKEVENTS {
@@ -261,9 +254,9 @@ typedef struct _WSANETWORKEVENTS {
 } WSANETWORKEVENTS, *LPWSANETWORKEVENTS;
 
 IOCP_DECL int WSAEnumNetworkEvents(
-  __in  SOCKET             s,
-  __in  WSAEVENT           hEventObject,
-  __out LPWSANETWORKEVENTS lpNetworkEvents
+  _In_  SOCKET             s,
+  _In_  WSAEVENT           hEventObject,
+  _Out_ LPWSANETWORKEVENTS lpNetworkEvents
 );
 
 enum
@@ -278,7 +271,7 @@ enum
 	ERROR_BUSY = 0xAA,
 	ERROR_IO_PENDING = 997,
 
-	ERROR_WAIT_TIMEOUT = ETIMEDOUT,
+	ERROR_WAIT_TIMEOUT = ETIME,
 
   WSAEINTR = EINTR,
   WSAEWOULDBLOCK = EWOULDBLOCK,
@@ -371,22 +364,22 @@ enum {
 };
 
 IOCP_DECL HANDLE CreateFileA(
-  __in            LPCSTR                lpFileName,
-  __in            DWORD                 dwDesiredAccess,
-  __in            DWORD                 dwShareMode,
+  _In_            LPCSTR                lpFileName,
+  _In_            DWORD                 dwDesiredAccess,
+  _In_            DWORD                 dwShareMode,
   _In_opt_        LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-  __in            DWORD                 dwCreationDisposition,
-  __in            DWORD                 dwFlagsAndAttributes,
+  _In_            DWORD                 dwCreationDisposition,
+  _In_            DWORD                 dwFlagsAndAttributes,
   _In_opt_        HANDLE                hTemplateFile
 );
 
 IOCP_DECL HANDLE CreateFileW(
-  __in            LPCWSTR               lpFileName,
-  __in            DWORD                 dwDesiredAccess,
-  __in            DWORD                 dwShareMode,
+  _In_            LPCWSTR               lpFileName,
+  _In_            DWORD                 dwDesiredAccess,
+  _In_            DWORD                 dwShareMode,
   _In_opt_        LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-  __in            DWORD                 dwCreationDisposition,
-  __in            DWORD                 dwFlagsAndAttributes,
+  _In_            DWORD                 dwCreationDisposition,
+  _In_            DWORD                 dwFlagsAndAttributes,
   _In_opt_        HANDLE                hTemplateFile
 );
 
@@ -394,17 +387,17 @@ IOCP_DECL HANDLE CreateFileW(
 #define CreateFile CreateFileA
 
 IOCP_DECL BOOL ReadFile(
-  __in                HANDLE       hFile,
-  __out               LPVOID       lpBuffer,
-  __in                DWORD        nNumberOfBytesToRead,
+  _In_                HANDLE       hFile,
+  _Out_               LPVOID       lpBuffer,
+  _In_                DWORD        nNumberOfBytesToRead,
   _Out_opt_	          LPDWORD      lpNumberOfBytesRead,
   _Inout_             LPOVERLAPPED lpOverlapped
 );
 
 IOCP_DECL BOOL WriteFile(
-  __in                 HANDLE       hFile,
-  __in                 LPCVOID      lpBuffer,
-  __in                 DWORD        nNumberOfBytesToWrite,
+  _In_                 HANDLE       hFile,
+  _In_                 LPCVOID      lpBuffer,
+  _In_                 DWORD        nNumberOfBytesToWrite,
   _Out_opt_            LPDWORD      lpNumberOfBytesWritten,
   _Inout_              LPOVERLAPPED lpOverlapped
 );
