@@ -1,4 +1,4 @@
-
+﻿
 #pragma once
 
 #include "awaitable.hpp"
@@ -191,11 +191,11 @@ inline void run_event_loop(HANDLE iocp_handle)
 
         if  ( quit_if_no_work) [[unlikely]]
         {
-            // 检查还在投递中的 IO 操作数。
-            if (pending_works())
-                continue;
-            else
+            // 检查还在投递中的 IO 操作.
+            if (!pending_works())
+            {
                 break;
+            }
         }
 
     }

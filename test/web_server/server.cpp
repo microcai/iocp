@@ -258,7 +258,7 @@ public:
 			start_accept(listenSocket, AF_INET, eventQueues[i % eventQueues.size()]).detach();
 	#else
 			start_accept(listenSocket6, AF_INET6, eventQueue).detach();
-			start_accept(listenSocket, AF_INET, eventQueues).detach();
+			start_accept(listenSocket, AF_INET, eventQueue).detach();
 	#endif
 		}
 
@@ -398,9 +398,9 @@ private:
 		else if (req.requestType == req.POST)
 		{
 			// close all listen socket
-			CancelIo(listenSocket);
+			CancelIo((HANDLE)listenSocket);
 			closesocket(listenSocket);
-			CancelIo(listenSocket6);
+			CancelIo((HANDLE)listenSocket6);
 			closesocket(listenSocket6);
 
 #ifndef _WIN32
