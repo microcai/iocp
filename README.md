@@ -30,6 +30,7 @@ just add iocp.cpp and iocp.h to your project and compile with the rest codes.
 | WSARecvFrom    |  ✅  |
 | AcceptEx   |  ✅  |
 | WSAConnectEx |✅ |
+| DisconnectEx |✅ |
 | CreateFileA |✅ |
 | CreateFileW |✅ |
 | ReadFile |✅ |
