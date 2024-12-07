@@ -363,13 +363,14 @@ public:
 		if (listenSocket == INVALID_SOCKET)
 			errorHandle("socket");
 
+#ifdef _WIN32
 		GUID disconnectex = WSAID_DISCONNECTEX;
 		DWORD BytesReturned;
 
 		WSAIoctl(listenSocket, SIO_GET_EXTENSION_FUNCTION_POINTER,
 			&disconnectex, sizeof(GUID), &DisconnectEx, sizeof(DisconnectEx), 
 			&BytesReturned, 0, 0);
-
+#endif
 		if (CreateIoCompletionPort((HANDLE)listenSocket6, eventQueue, (ULONG_PTR)0, 0) == NULL)
 			errorHandle("IOCP bind socket6");
 		if (CreateIoCompletionPort((HANDLE)listenSocket, eventQueue, (ULONG_PTR)0, 0) == NULL)
