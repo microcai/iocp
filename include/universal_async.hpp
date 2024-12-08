@@ -172,7 +172,13 @@ inline void run_event_loop(HANDLE iocp_handle)
     {
         LPOVERLAPPED op;
         DWORD NumberOfBytes;
-        int last_error;
+        DWORD last_error;
+
+        OVERLAPPEDRESULT(OVERLAPPED* ovl, DWORD b, DWORD e)
+            : op(ovl)
+            , NumberOfBytes(b)
+            , last_error(e)
+        {}
     };
 
     // batch size of 128
@@ -196,7 +202,7 @@ inline void run_event_loop(HANDLE iocp_handle)
                         (PULONG_PTR)&ipCompletionKey,
                         &ipOverlap,
                         0);
-            if (result && ipOverlap) [[likely]]
+            if (ipOverlap) [[likely]]
             {
                 ops.emplace_back(ipOverlap, NumberOfBytes, GetLastError());
             }
@@ -225,7 +231,7 @@ inline void run_event_loop(HANDLE iocp_handle)
                         &ipOverlap,
                         dwMilliseconds_to_wait);
 
-            if (result && ipOverlap) [[likely]]
+            if (ipOverlap) [[likely]]
             {
                 ops.emplace_back(ipOverlap, NumberOfBytes, GetLastError());
             }
