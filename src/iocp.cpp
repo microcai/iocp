@@ -105,7 +105,10 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 				{
 					continue;
 				}
-
+				else if (dwMilliseconds == INFINITE && io_uring_ret == -EAGAIN)
+				{
+					continue;
+				}
 				// timeout
 				WSASetLastError(ERROR_WAIT_TIMEOUT);
 				return false;
