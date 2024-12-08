@@ -77,17 +77,30 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 		io_uring_operation_ptr op = nullptr;
 		{
 			std::scoped_lock<nullable_mutex> l(iocp->wait_mutex);
-			auto io_uring_ret = io_uring_wait_cqe_timeout(&iocp->ring_, &cqe, dwMilliseconds == UINT32_MAX ? nullptr : &ts);
+			int io_uring_ret = 0;
+			if (dwMilliseconds == 0)
+			{
+				io_uring_ret = io_uring_peek_cqe(&iocp->ring_, &cqe);
+			}
+			else
+			{
+				io_uring_ret = //io_uring_wait_cqe_timeout(&iocp->ring_, &cqe, dwMilliseconds == UINT32_MAX ? nullptr : &ts);
+				io_uring_submit_and_wait_timeout(&iocp->ring_, &cqe, 1,  dwMilliseconds == UINT32_MAX ? nullptr : &ts, nullptr);
+			}
 
-			// auto io_uring_ret =
-			// 	io_uring_submit_and_wait_timeout(&iocp->ring_, &cqe, 1,  dwMilliseconds == UINT32_MAX ? nullptr : &ts, nullptr);
 
 			if (io_uring_ret < 0) [[unlikely]]
 			{
-				if (io_uring_ret == -EINTR)
+				if (io_uring_ret == -EAGAIN && dwMilliseconds ==0) [[likely]]
+				{
+					WSASetLastError(ERROR_WAIT_TIMEOUT);
+					return false;
+				}
+				else if (io_uring_ret == -EINTR) [[unlikely]]
 				{
 					continue;
 				}
+
 				// timeout
 				WSASetLastError(ERROR_WAIT_TIMEOUT);
 				return false;
@@ -309,7 +322,7 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 			}
 
 			WSASetLastError(0);
-			accept_into->_socket_fd = *lpNumberOfBytes;
+			accept_into->_socket_fd = cqe->res;
 
 			getsockname(accept_into->_socket_fd, &local_addr, &local_addr_len);
 

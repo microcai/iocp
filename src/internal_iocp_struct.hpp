@@ -97,7 +97,7 @@ struct iocp_handle_emu_class final : public base_handle
 			sqe = io_uring_get_sqe(&ring_);
 		}
 		preparer(sqe);
-		return io_uring_submit(&ring_);
+		// return io_uring_submit(&ring_);
 	}
 };
 

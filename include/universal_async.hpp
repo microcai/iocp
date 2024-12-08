@@ -3,7 +3,7 @@
 
 #include "awaitable.hpp"
 #include <cstdint>
-
+#include <memory_resource>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -46,6 +46,7 @@ struct basic_awaitable_overlapped : public OVERLAPPED
 {
     MUTEX m;
     DWORD NumberOfBytes;
+    DWORD last_error;
     std::coroutine_handle<> coro_handle;
     bool completed;
 
@@ -123,6 +124,7 @@ public:
     {
         std::scoped_lock<MUTEX> l(ov.m);
         auto NumberOfBytes = ov.NumberOfBytes;
+        WSASetLastError(ov.last_error);
         ov.reset();
         -- awaitable_overlapped::out_standing;
         return NumberOfBytes;
@@ -141,12 +143,13 @@ inline ucoro::awaitable<DWORD> wait_overlapped(awaitable_overlapped& ov)
 }
 
 // call this after GetQueuedCompletionStatus.
-inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes)
+inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes, DWORD last_error)
 {
     auto ov = reinterpret_cast<awaitable_overlapped*>(_ov);
 
     ov->m.lock();
 
+    ov->last_error = last_error;
     ov->NumberOfBytes = NumberOfBytes;
     ov->completed = true;
 
@@ -164,29 +167,85 @@ inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes)
 inline void run_event_loop(HANDLE iocp_handle)
 {
     bool quit_if_no_work = false;
+
+    struct OVERLAPPEDRESULT
+    {
+        LPOVERLAPPED op;
+        DWORD NumberOfBytes;
+        int last_error;
+    };
+
+    // batch size of 128
+    std::vector<OVERLAPPEDRESULT> ops;
+    ops.reserve(128);
+
     for (;;)
     {
-        DWORD NumberOfBytes;
-        ULONG_PTR ipCompletionKey;
-        LPOVERLAPPED ipOverlap = nullptr;
-
         DWORD dwMilliseconds_to_wait = quit_if_no_work ? ( pending_works() ? 500 : 0 ) : INFINITE;
-        // get IO status
-        auto  result = GetQueuedCompletionStatus(
-                    iocp_handle,
-                    &NumberOfBytes,
-                    (PULONG_PTR)&ipCompletionKey,
-                    &ipOverlap,
-                    dwMilliseconds_to_wait);
 
-        if (ipOverlap) [[likely]]
+        while (ops.size() < 128)
         {
-            process_overlapped_event(ipOverlap, NumberOfBytes);
+            DWORD NumberOfBytes;
+            ULONG_PTR ipCompletionKey;
+            LPOVERLAPPED ipOverlap = nullptr;
+
+            // get IO status, no wait
+            auto  result = GetQueuedCompletionStatus(
+                        iocp_handle,
+                        &NumberOfBytes,
+                        (PULONG_PTR)&ipCompletionKey,
+                        &ipOverlap,
+                        0);
+            if (ipOverlap) [[likely]]
+            {
+                ops.emplace_back(ipOverlap, NumberOfBytes, GetLastError());
+            }
+            else if (ipCompletionKey == (ULONG_PTR) iocp_handle) [[unlikely]]
+            {
+              quit_if_no_work = true;
+            }
+            else
+            {
+                if (result == FALSE && GetLastError() == ERROR_WAIT_TIMEOUT)
+                    break;
+            }
         }
-        else if (ipCompletionKey == (ULONG_PTR) iocp_handle) [[unlikely]]
+
+        if (ops.empty())
         {
-            quit_if_no_work = true;
-            // mark eventloop to quit if no more pending IO.
+            DWORD NumberOfBytes;
+            ULONG_PTR ipCompletionKey;
+            LPOVERLAPPED ipOverlap = nullptr;
+
+            // get IO status, no wait
+            auto  result = GetQueuedCompletionStatus(
+                        iocp_handle,
+                        &NumberOfBytes,
+                        (PULONG_PTR)&ipCompletionKey,
+                        &ipOverlap,
+                        dwMilliseconds_to_wait);
+
+            if (ipOverlap) [[likely]]
+            {
+                ops.emplace_back(ipOverlap, NumberOfBytes);
+            }
+            else if (ipCompletionKey == (ULONG_PTR) iocp_handle) [[unlikely]]
+            {
+              quit_if_no_work = true;
+            }
+            else
+            {
+                if (GetLastError() == ERROR_WAIT_TIMEOUT)
+                    break;
+            }
+        }
+        else
+        {
+            for (OVERLAPPEDRESULT& op : ops)
+            {
+                process_overlapped_event(op.op, op.NumberOfBytes, op.last_error);
+            }
+            ops.clear();
         }
 
         if  ( quit_if_no_work) [[unlikely]]
