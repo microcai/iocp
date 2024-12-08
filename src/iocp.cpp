@@ -270,7 +270,7 @@ IOCP_DECL SOCKET WSASocket(_In_ int af, _In_ int type, _In_ int protocol, _In_ L
 	{
 		type |= SOCK_CLOEXEC;
 	}
-	auto ret = new SOCKET_emu_class{ (dwFlags & WSA_FLAG_FAKE_CREATION )  ? ::socket(af, type, protocol) : -1 };
+	auto ret = new SOCKET_emu_class{ (dwFlags & WSA_FLAG_FAKE_CREATION )  ? -1 : ::socket(af, type, protocol) };
 	return ret;
 }
 
