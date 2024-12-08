@@ -196,11 +196,11 @@ inline void run_event_loop(HANDLE iocp_handle)
                         (PULONG_PTR)&ipCompletionKey,
                         &ipOverlap,
                         0);
-            if (ipOverlap) [[likely]]
+            if (result && ipOverlap) [[likely]]
             {
                 ops.emplace_back(ipOverlap, NumberOfBytes, GetLastError());
             }
-            else if (ipCompletionKey == (ULONG_PTR) iocp_handle) [[unlikely]]
+            else if (result && (ipCompletionKey == (ULONG_PTR) iocp_handle)) [[unlikely]]
             {
               quit_if_no_work = true;
             }
