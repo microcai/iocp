@@ -84,13 +84,20 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 				static struct __kernel_timespec min_ts = {.tv_sec = 0, .tv_nsec = 2000 };
 				if (io_uring_ret == -EAGAIN)
 				{
-					io_uring_ret = io_uring_submit_and_wait_timeout(&iocp->ring_, &cqe, 1, &min_ts, nullptr);
+					{
+						std::scoped_lock<nullable_mutex> ll(iocp->submit_mutex);
+						io_uring_submit(&iocp->ring_);
+					}
+					io_uring_ret = io_uring_wait_cqe_timeout(&iocp->ring_, &cqe, &min_ts);
 				}
 			}
 			else
 			{
-				io_uring_ret = //io_uring_wait_cqe_timeout(&iocp->ring_, &cqe, dwMilliseconds == UINT32_MAX ? nullptr : &ts);
-				io_uring_submit_and_wait_timeout(&iocp->ring_, &cqe, 1,  dwMilliseconds == UINT32_MAX ? nullptr : &ts, nullptr);
+				{
+					std::scoped_lock<nullable_mutex> ll(iocp->submit_mutex);
+					io_uring_submit(&iocp->ring_);
+				}
+				io_uring_ret = io_uring_wait_cqe_timeout(&iocp->ring_, &cqe, dwMilliseconds == UINT32_MAX ? nullptr : &ts);
 			}
 
 
