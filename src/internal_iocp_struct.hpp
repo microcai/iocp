@@ -29,7 +29,13 @@ struct base_handle
 
 	void ref(){ ref_count++;}
 
-	void unref();
+	void unref()
+	{
+		if (--ref_count == 0)
+		{
+			delete this;
+		}		
+	}
 
 	int native_handle() {return _socket_fd; }
 
@@ -107,7 +113,14 @@ struct SOCKET_emu_class final : public base_handle
 	{
 	}
 
-	virtual ~SOCKET_emu_class() override;
+	virtual ~SOCKET_emu_class() override
+	{
+		_iocp->submit_io([this](io_uring_sqe* sqe)
+		{
+			io_uring_prep_close(sqe, _socket_fd);
+			io_uring_sqe_set_data(sqe, nullptr);
+		});
+	}
 };
 
 }

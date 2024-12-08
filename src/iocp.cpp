@@ -21,15 +21,6 @@
 
 #define IORING_CQE_F_USER 32
 
-SOCKET_emu_class::~SOCKET_emu_class()
-{
-	_iocp->submit_io([this](io_uring_sqe* sqe)
-	{
-		io_uring_prep_close(sqe, _socket_fd);
-		io_uring_sqe_set_data(sqe, nullptr);
-	});
-}
-
 IOCP_DECL BOOL WINAPI CloseHandle(_In_ HANDLE h)
 {
 	h->unref();
@@ -721,14 +712,6 @@ IOCP_DECL BOOL DisconnectEx(
 
 	WSASetLastError(ERROR_IO_PENDING);
 	return SOCKET_ERROR;
-}
-
-void base_handle::unref()
-{
-	if (--ref_count == 0)
-	{
-		delete this;
-	}
 }
 
 IOCP_DECL int closesocket(SOCKET s)
