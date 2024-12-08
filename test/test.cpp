@@ -22,13 +22,13 @@ ucoro::awaitable<void> echo_sever_client_session(SOCKET client_socket)
 	awaitable_overlapped ov;
 
 	WSARecv(client_socket, &wsa_buf[1], 1, &bytes_read, &flags, &ov, NULL);
-	bytes_read = co_await wait_overlapped(ov);
+	bytes_read = co_await get_overlapped_result(ov);
 
 	wsa_buf[1].len = bytes_read;
 	wsa_buf[0].buf = (char*)"HTTP/1.1 200 OK\r\n\r\n";
 	wsa_buf[0].len = 19;
 	WSASend(client_socket, wsa_buf, 2, NULL, 0, &ov, NULL);
-	co_await wait_overlapped(ov);
+	co_await get_overlapped_result(ov);
 
 	closesocket(client_socket);
 }
@@ -45,22 +45,25 @@ ucoro::awaitable<void> accept_coro(SOCKET slisten, HANDLE iocp)
 
 		AcceptEx(slisten, client_socket, addr_buff, 0, sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &ignore, &ov);
 
-		co_await wait_overlapped(ov);
+		if (GetLastError() == ERROR_IO_PENDING)
+		{
+			co_await get_overlapped_result(ov);
 
-		// printf("New con: %p\n", client_socket);
+			// printf("New con: %p\n", client_socket);
 
-		LPSOCKADDR local_addr = 0;
-		socklen_t local_addr_length = 0;
-		LPSOCKADDR remote_addr = 0;
-		socklen_t remote_addr_length = 0;
-		DWORD address_length = sizeof(sockaddr_in6) + 16 ;
+			LPSOCKADDR local_addr = 0;
+			socklen_t local_addr_length = 0;
+			LPSOCKADDR remote_addr = 0;
+			socklen_t remote_addr_length = 0;
+			DWORD address_length = sizeof(sockaddr_in6) + 16 ;
 
-		GetAcceptExSockaddrs(addr_buff, 0, address_length, address_length, &local_addr,
-								&local_addr_length, &remote_addr, &remote_addr_length);
+			GetAcceptExSockaddrs(addr_buff, 0, address_length, address_length, &local_addr,
+									&local_addr_length, &remote_addr, &remote_addr_length);
 
-		HANDLE read_port = CreateIoCompletionPort((HANDLE)(client_socket), iocp, 0, 0);
+			HANDLE read_port = CreateIoCompletionPort((HANDLE)(client_socket), iocp, 0, 0);
 
-		echo_sever_client_session(client_socket).detach();
+			echo_sever_client_session(client_socket).detach();
+		}
 	}
 }
 

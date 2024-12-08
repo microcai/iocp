@@ -163,7 +163,7 @@ private:
 			co_return -1;
 		}
 
-		co_await wait_overlapped(ov);
+		co_await get_overlapped_result(ov);
 
 		char buffer[1024];
 
@@ -180,7 +180,7 @@ private:
 				break;
 			}
 
-			readLength = co_await wait_overlapped(file_ov);
+			readLength = co_await get_overlapped_result(file_ov);
 
 			if (readLength > 0)
 			{
@@ -194,12 +194,12 @@ private:
 					co_return -1;
 				}
 
-				co_await wait_overlapped(ov);
+				co_await get_overlapped_result(ov);
 			}
 		}while(readLength > 0);
 
 		DisconnectEx(socket, &ov, 0, 0);
-		co_await wait_overlapped(ov);
+		co_await get_overlapped_result(ov);
 		// printf("file sent successfull...\n");
 
 		co_return 1;
@@ -212,7 +212,7 @@ private:
 
 		WSASend(socket, buf, 1, 0, 0, &ov, 0);
 
-		co_await wait_overlapped(ov);
+		co_await get_overlapped_result(ov);
 		co_return 1;
 	}
 	string getCurFilePath() {
@@ -292,7 +292,7 @@ public:
 			char outputbuffer[128];
 			DWORD out_size = 0;
 			AcceptEx(listen_sock, socket, outputbuffer, 0,sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &out_size, &ov);
-			auto accepted_size = co_await wait_overlapped(ov);
+			auto accepted_size = co_await get_overlapped_result(ov);
 			auto err = GetLastError();
 			if (err == WSAECANCELLED || err == ERROR_OPERATION_ABORTED)
 			{
@@ -334,7 +334,7 @@ public:
 
 		awaitable_overlapped ov;
  		WSARecv(socket, &wsaBuf,1, &recvBytes, &flags, &ov, NULL);
-		auto recv_bytes = co_await wait_overlapped(ov);
+		auto recv_bytes = co_await get_overlapped_result(ov);
 
 		request req = request(buffer, recv_bytes);
 		if (req.requestType < 0) {

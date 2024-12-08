@@ -137,7 +137,7 @@ inline int pending_works()
 }
 
 // wait for overlapped to became complete. return NumberOfBytes
-inline ucoro::awaitable<DWORD> wait_overlapped(awaitable_overlapped& ov)
+inline ucoro::awaitable<DWORD> get_overlapped_result(awaitable_overlapped& ov)
 {
     co_return co_await BasicOverlappedAwaiter{ov};
 }
