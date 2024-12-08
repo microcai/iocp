@@ -81,6 +81,11 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 			if (dwMilliseconds == 0)
 			{
 				io_uring_ret = io_uring_peek_cqe(&iocp->ring_, &cqe);
+				static struct __kernel_timespec min_ts = {.tv_sec = 0, .tv_nsec = 2000 };
+				if (io_uring_ret == -EAGAIN)
+				{
+					io_uring_ret = io_uring_submit_and_wait_timeout(&iocp->ring_, &cqe, 1, &min_ts, nullptr);
+				}
 			}
 			else
 			{
