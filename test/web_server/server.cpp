@@ -1,6 +1,7 @@
-/*
+﻿/*
 * In the linker options (on the project right-click, linker, input) you need add wsock32.lib or ws2_32.lib to the list of input files.
 */
+#define DISABLE_THREADS 1
 #include <cstdio>
 #include <iostream>
 #include <string>
@@ -46,7 +47,7 @@ public:
 		UNKNOW = -1
 	};
 	string typeName[2] = { "GET","POST" };
-	int messageLength;
+	size_t messageLength;
 	int requestType = UNKNOW;
 	char clientIP[16];
 	u_short clientPort;
@@ -162,7 +163,7 @@ private:
 			printf("Error sending header, reconnecting...\n");
 			co_return -1;
 		}
-
+	
 		co_await get_overlapped_result(ov);
 
 		char buffer[1024];
@@ -173,14 +174,17 @@ private:
 		do
 		{
 			// ov.Offset = ov.OffsetHigh = 0;
-			auto ret = ReadFile(file, buffer, sizeof buffer, 0 , &file_ov);
+			DWORD readed;
+			SetLastError(0);
+			auto ret = ReadFile(file, buffer, sizeof buffer, &readed , &file_ov);
 			auto err = GetLastError();
-			if (err == ERROR_HANDLE_EOF)
+			if (ret == FALSE && err != ERROR_IO_PENDING)
 			{
 				break;
 			}
 
-			readLength = co_await get_overlapped_result(file_ov);
+			if (ret == FALSE && err == ERROR_IO_PENDING)
+				readLength = co_await get_overlapped_result(file_ov);
 
 			if (readLength > 0)
 			{
@@ -188,18 +192,21 @@ private:
 				wsabuf.buf = buffer;
 				wsabuf.len = readLength;
 				sendResult = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
-
-				if (sendResult == SOCKET_ERROR && GetLastError() != ERROR_IO_PENDING) {
+				err = GetLastError();
+				if (sendResult == SOCKET_ERROR && err != ERROR_IO_PENDING)
+				{
 					printf("Error sending body, reconnecting...\n");
-					co_return -1;
+					co_return -1;					
 				}
-
 				co_await get_overlapped_result(ov);
 			}
 		}while(readLength > 0);
 
-		DisconnectEx(socket, &ov, 0, 0);
-		co_await get_overlapped_result(ov);
+		awaitable_overlapped disconnect_ov;
+		auto disconnect_result = DisconnectEx(socket, &disconnect_ov, TF_REUSE_SOCKET, 0);
+		auto err = GetLastError();
+		if (disconnect_result == FALSE && err == ERROR_IO_PENDING)
+			co_await get_overlapped_result(disconnect_ov);
 		// printf("file sent successfull...\n");
 
 		co_return 1;
