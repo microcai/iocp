@@ -47,7 +47,7 @@ public:
 	};
 	string typeName[2] = { "GET","POST" };
 	int messageLength;
-	int requestType;
+	int requestType = UNKNOW;
 	char clientIP[16];
 	u_short clientPort;
 	string filePath;
@@ -64,7 +64,7 @@ private:
 		clientPort = htons(setting.sin_port);
 	}
 	void destructStr(char* buffer) {
-		string requestStr = buffer;
+		string requestStr { buffer , messageLength };
 		int index = 0;
 		index = setRequestType(requestStr, index);
 		index = setFilePath(requestStr, index);
@@ -73,7 +73,7 @@ private:
 	int setRequestType(string& str, int start) {
 		int firstSpaceIndex = str.find(" ", start);
 		if (firstSpaceIndex == -1)
-			throw;
+			throw std::runtime_error{"invalid protocol"};
 		string type = str.substr(0, firstSpaceIndex);
 		if (type == "GET")
 			requestType = GET;
@@ -336,16 +336,19 @@ public:
  		WSARecv(socket, &wsaBuf,1, &recvBytes, &flags, &ov, NULL);
 		auto recv_bytes = co_await get_overlapped_result(ov);
 
-		request req = request(buffer, recv_bytes);
-		if (req.requestType < 0) {
-			co_return;
-		}
+		try {
+			request req = request(buffer, recv_bytes);
+			if (req.requestType < 0) {
+				co_return;
+			}
 
-		// cout << req.typeName[req.requestType] << " : " << req.filePath << endl;
-		int sentResult = co_await responseClient(req, socket);
-		if (sentResult <= 0) {
-			printf("send error\n");
-		}
+			// cout << req.typeName[req.requestType] << " : " << req.filePath << endl;
+			int sentResult = co_await responseClient(req, socket);
+			if (sentResult <= 0) {
+				printf("send error\n");
+			}
+		}catch(std::exception&)
+		{}
 	}
 
 
