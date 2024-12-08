@@ -332,11 +332,10 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 			WSASetLastError(0);
 			accept_into->_socket_fd = cqe->res;
 
-			getsockname(accept_into->_socket_fd, &local_addr, &local_addr_len);
-
 			// 向 lpOutputBuffer 写入数据，以便 GetAcceptExSockaddrs 解析
 			if (lpOutputBuffer) [[likely]]
 			{
+				getsockname(accept_into->_socket_fd, &local_addr, &local_addr_len);
 				// lpOutputBuffer 的结构是
 				// [local_addr_length][local_addr][remote_addr_len][remote_addr]
 				memcpy(lpOutputBuffer, &local_addr_len, 1);
