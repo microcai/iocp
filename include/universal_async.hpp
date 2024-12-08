@@ -206,7 +206,7 @@ inline void run_event_loop(HANDLE iocp_handle)
             }
             else
             {
-                if (result == FALSE && GetLastError() == ERROR_WAIT_TIMEOUT)
+                if (result == FALSE && GetLastError() == WSA_WAIT_TIMEOUT)
                     break;
             }
         }
@@ -231,11 +231,11 @@ inline void run_event_loop(HANDLE iocp_handle)
             }
             else if (ipCompletionKey == (ULONG_PTR) iocp_handle) [[unlikely]]
             {
-              quit_if_no_work = true;
+                quit_if_no_work = true;
             }
             else
             {
-                if (GetLastError() == ERROR_WAIT_TIMEOUT)
+                if (GetLastError() == WSA_WAIT_TIMEOUT)
                     break;
             }
         }

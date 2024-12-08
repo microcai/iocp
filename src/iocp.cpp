@@ -105,7 +105,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 			{
 				if (io_uring_ret == -EAGAIN && dwMilliseconds ==0) [[likely]]
 				{
-					WSASetLastError(ERROR_WAIT_TIMEOUT);
+					WSASetLastError(WSA_WAIT_TIMEOUT);
 					return false;
 				}
 				else if (io_uring_ret == -EINTR) [[unlikely]]
@@ -117,7 +117,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 					continue;
 				}
 				// timeout
-				WSASetLastError(ERROR_WAIT_TIMEOUT);
+				WSASetLastError(WSA_WAIT_TIMEOUT);
 				return false;
 			}
 
