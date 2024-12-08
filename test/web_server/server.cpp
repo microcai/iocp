@@ -292,16 +292,17 @@ public:
 			char outputbuffer[128];
 			DWORD out_size = 0;
 			AcceptEx(listen_sock, socket, outputbuffer, 0,sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &out_size, &ov);
-			auto accepted_size = co_await get_overlapped_result(ov);
 			auto err = GetLastError();
+			if ((err != ERROR_IO_PENDING)) // other error, ignore and re accept
+			{
+				printf("accept errored %d\n", err);
+				break;
+			}
+			auto accepted_size = co_await get_overlapped_result(ov);
+			err = GetLastError();
 			if (err == WSAECANCELLED || err == ERROR_OPERATION_ABORTED)
 			{
 				printf("requested quit, exiting accept loop\n");
-				break;
-			}
-			if ((err != ERROR_IO_PENDING) && err != 0) // other error, ignore and re accept
-			{
-				printf("accept errored %d\n", err);
 				break;
 			}
 			else

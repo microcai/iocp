@@ -225,11 +225,11 @@ inline void run_event_loop(HANDLE iocp_handle)
                         &ipOverlap,
                         dwMilliseconds_to_wait);
 
-            if (ipOverlap) [[likely]]
+            if (result && ipOverlap) [[likely]]
             {
-                ops.emplace_back(ipOverlap, NumberOfBytes);
+                ops.emplace_back(ipOverlap, NumberOfBytes, GetLastError());
             }
-            else if (ipCompletionKey == (ULONG_PTR) iocp_handle) [[unlikely]]
+            else if (result && (ipCompletionKey == (ULONG_PTR) iocp_handle)) [[unlikely]]
             {
                 quit_if_no_work = true;
             }
