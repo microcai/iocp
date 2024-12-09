@@ -119,19 +119,20 @@ public:
 		GetRouters.push_back("/getFile/");
 	}
 
-	ucoro::awaitable<int> runGetRoute(SOCKET& socket, string route) {
+	ucoro::awaitable<void> runGetRoute(SOCKET& socket, string route) {
 		for (auto i : GetRouters) {
 			if (0 == route.find(i)) {
 				matchStr = i;
 				goto routers;
 			}
 		}
-		co_return co_await notFound(socket);
+		co_await notFound(socket);
+		co_return;
 	routers:
 		if (matchStr == "/getFile/")
-			co_return co_await getFile(socket, route);
+			co_await getFile(socket, route);
 		else
-			co_return co_await notFound(socket);
+			co_await notFound(socket);
 	}
 private:
 	string matchStr;
@@ -198,15 +199,19 @@ private:
 
 				wsabuf = WSABUF{ .len = readLength , .buf = pri_buf };
 
-				sendResult = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
-				if (sendResult == SOCKET_ERROR && GetLastError() != ERROR_IO_PENDING)
+				auto result = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
+				auto last_error = WSAGetLastError();
+			    if (result != 0 && last_error != WSA_IO_PENDING)
 				{
-					printf("Error sending body, reconnecting...\n");
-					if (need_wait_readfile){
-						CancelIoEx(file, &file_ov);
-						back_readLength = co_await get_overlapped_result(file_ov);
+					if (result == SOCKET_ERROR)
+					{
+						printf("Error sending body, reconnecting...\n");
+						if (need_wait_readfile){
+							CancelIoEx(file, &file_ov);
+							back_readLength = co_await get_overlapped_result(file_ov);
+						}
+						co_return -1;
 					}
-					co_return -1;
 				}
 				if (need_wait_readfile)
 					back_readLength = co_await get_overlapped_result(file_ov);
@@ -224,14 +229,30 @@ private:
 		co_return 1;
 	}
 	ucoro::awaitable<int> notFound(SOCKET& socket) {
-		WSABUF buf[1];
-		buf[0].buf =  (char*) DEFAULT_ERROR_404;
-		buf[0].len = sizeof(DEFAULT_ERROR_404) - 1;
+		WSABUF wsabuf { .len = sizeof(DEFAULT_ERROR_404) - 1 , .buf = (char*) DEFAULT_ERROR_404 };
+
 		awaitable_overlapped ov;
 
-		WSASend(socket, buf, 1, 0, 0, &ov, 0);
-
-		co_await get_overlapped_result(ov);
+		auto result = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
+		auto last_error = WSAGetLastError();
+		if (result != 0 && last_error != WSA_IO_PENDING)
+		{
+			printf("wsasend overlaping failed\n");
+			if (result == SOCKET_ERROR)
+			{
+				printf("Error sending 404, reconnecting...\n");
+				co_return -1;
+			}
+			else
+			{
+				printf("wsa send errored %d %d\n", result, last_error);
+				co_return -1;
+			}
+		}
+		else
+		{
+			co_await get_overlapped_result(ov);
+		}
 		co_return 1;
 	}
 	string getCurFilePath() {
@@ -311,22 +332,23 @@ public:
 			SOCKET socket = WSASocket(family, SOCK_STREAM , IPPROTO_TCP, 0 , 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_FAKE_CREATION);
 			awaitable_overlapped ov;
 			char outputbuffer[128];
-			DWORD out_size = 0;
-			AcceptEx(listen_sock, socket, outputbuffer, 0,sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &out_size, &ov);
-			auto err = GetLastError();
-			if ((err != ERROR_IO_PENDING)) // other error, ignore and re accept
+			DWORD out_size = 0, accepted_size = 0;
+			auto result = AcceptEx(listen_sock, socket, outputbuffer, 0,sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &out_size, &ov);
+			auto last_error = WSAGetLastError();
+			if (result != 0 && last_error != WSA_IO_PENDING)
 			{
-				printf("accept errored %d\n", err);
-				break;
+				ov.last_error = last_error;
 			}
-			auto accepted_size = co_await get_overlapped_result(ov);
-			err = GetLastError();
-			if (err == WSAECANCELLED || err == ERROR_OPERATION_ABORTED)
+			else
+			{
+				accepted_size = co_await get_overlapped_result(ov);
+			}
+			if (ov.last_error == WSAECANCELLED || ov.last_error == ERROR_OPERATION_ABORTED)
 			{
 				printf("requested quit, exiting accept loop\n");
 				break;
 			}
-			else
+			else if (ov.last_error == 0)
 			{
 				CreateIoCompletionPort((HANDLE)socket, binded_event_queue, 0, 0);
 				sockaddr* localaddr, *remoteaddr;
@@ -337,7 +359,7 @@ public:
 				#endif
 
 				handle_connection(socket, binded_event_queue).detach(binded_event_queue);
-			}
+			}	
 		}
 	}
 
@@ -348,15 +370,25 @@ public:
 		wsaBuf.buf = buffer;
 		wsaBuf.len = sizeof(buffer);
 
-		DWORD recvBytes = 0, flags = 0;
+		DWORD flags = 0;
 
 		// co_await run_on_iocp_thread(iocp);
 
 		auto_sockethandle auto_close(socket);
 
 		awaitable_overlapped ov;
- 		WSARecv(socket, &wsaBuf,1, &recvBytes, &flags, &ov, NULL);
-		auto recv_bytes = co_await get_overlapped_result(ov);
+		DWORD recv_bytes;
+ 		auto result = WSARecv(socket, &wsaBuf,1, &recv_bytes, &flags, &ov, NULL);
+		auto last_error = WSAGetLastError();
+		if (result != 0 && last_error != WSA_IO_PENDING)
+		{
+			if (recv_bytes <= 0)
+				co_return;
+		}
+		else
+		{
+			recv_bytes = co_await get_overlapped_result(ov);
+		}
 
 		try {
 			request req = request(buffer, recv_bytes);
@@ -365,10 +397,8 @@ public:
 			}
 
 			// cout << req.typeName[req.requestType] << " : " << req.filePath << endl;
-			int sentResult = co_await responseClient(req, socket);
-			if (sentResult <= 0) {
-				printf("send error\n");
-			}
+			co_await responseClient(req, socket);
+
 		}catch(std::exception&)
 		{}
 	}
@@ -445,7 +475,7 @@ private:
 		exit(FAIL_CODE);
 	}
 
-	ucoro::awaitable<int> responseClient(request req, SOCKET& messageSocket) {
+	ucoro::awaitable<void> responseClient(request req, SOCKET& messageSocket) {
 		response response;
 		if (req.requestType == req.GET)
 			co_return co_await response.runGetRoute(messageSocket, req.filePath);
@@ -464,8 +494,7 @@ private:
 			exit_event_loop_when_empty(eventQueue);
 		}
 		else
-			co_return co_await response.runGetRoute(messageSocket, "/404");
-		co_return -1;
+			co_await response.runGetRoute(messageSocket, "/404");
 	}
 };
 

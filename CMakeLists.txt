@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.25)
 project(iocp)
 set(CMAKE_CXX_STANDARD 23)
 
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 if (WIN32)
 add_library(iocp INTERFACE)
 target_include_directories(iocp INTERFACE include)
