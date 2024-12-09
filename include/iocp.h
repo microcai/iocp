@@ -328,12 +328,14 @@ int listen(SOCKET, int);
 int setsockopt(SOCKET, int __level, int __optname, const void *__optval, socklen_t __optlen);
 
 #define ZeroMemory(a, b) memset(a, 0, b)
-#define GetLastError() errno
 
 #define memcpy_s(a, b ,c ,d ) memcpy(a, c, d)
 
 IOCP_DECL DWORD WSAGetLastError();
 IOCP_DECL DWORD WSASetLastError(DWORD);
+
+#define GetLastError() WSAGetLastError()
+#define SetLastError(e) WSASetLastError(e)
 
 inline WORD MAKEWORD(uint a, uint b)
 {

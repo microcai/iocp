@@ -114,6 +114,16 @@ inline ucoro::awaitable<DWORD> get_overlapped_result(awaitable_overlapped& ov)
     co_return co_await OverlappedAwaiter{ov};
 }
 
+inline ucoro::awaitable<DWORD> get_overlapped_result_with_checking(awaitable_overlapped& ov, int initiator_result, DWORD NumberOfBytes, DWORD last_error = WSAGetLastError())
+{
+    if (initiator_result != 0 && last_error != WSA_IO_PENDING)
+    {
+        ov.last_error = last_error;
+        co_return NumberOfBytes;
+    }
+    co_return co_await OverlappedAwaiter{ov};
+}
+
 // call this after GetQueuedCompletionStatus.
 inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes, DWORD last_error)
 {
@@ -156,8 +166,8 @@ inline void run_event_loop(HANDLE iocp_handle)
 
         while (ops.size() < 128)
         {
-            DWORD NumberOfBytes;
-            ULONG_PTR ipCompletionKey;
+            DWORD NumberOfBytes = 0;
+            ULONG_PTR ipCompletionKey = 0;
             LPOVERLAPPED ipOverlap = nullptr;
 
             // get IO status, no wait
@@ -188,8 +198,8 @@ inline void run_event_loop(HANDLE iocp_handle)
 
         if (ops.empty())
         {
-            DWORD NumberOfBytes;
-            ULONG_PTR ipCompletionKey;
+            DWORD NumberOfBytes = 0;
+            ULONG_PTR ipCompletionKey = 0;
             LPOVERLAPPED ipOverlap = nullptr;
 
             // get IO status, no wait
