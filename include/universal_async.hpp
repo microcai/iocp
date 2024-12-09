@@ -3,7 +3,7 @@
 
 #include "awaitable.hpp"
 #include <cstdint>
-#include <memory_resource>
+#include <mutex>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -15,42 +15,18 @@
 #include "iocp.h"
 #endif
 
-#include <mutex>
-#include <optional>
 
-struct dummy_mutex
+struct awaitable_overlapped : public OVERLAPPED
 {
-	constexpr void lock() noexcept
-	{
-	}
-
-	constexpr void unlock() noexcept
-	{
-	}
-};
-
-template <typename MUTEX>
-struct counter_trait
-{
-    using type = std::atomic_int;
-};
-
-template <>
-struct counter_trait<dummy_mutex>
-{
-    using type = long;
-};
-
-template <typename MUTEX>
-struct basic_awaitable_overlapped : public OVERLAPPED
-{
-    MUTEX m;
     DWORD NumberOfBytes;
     DWORD last_error;
     std::coroutine_handle<> coro_handle;
-    bool completed;
+    std::atomic_flag completed;
+    std::mutex m;
 
-    static typename counter_trait<MUTEX>::type out_standing;
+    using out_standing_t = std::atomic_long;
+
+    static out_standing_t out_standing;
 
     void reset()
     {
@@ -58,7 +34,7 @@ struct basic_awaitable_overlapped : public OVERLAPPED
         this->hEvent = NULL;
         NumberOfBytes = 0;
         coro_handle = nullptr;
-        completed = false;
+        completed.clear();
     }
 
     void set_offset(uint64_t offset)
@@ -77,55 +53,51 @@ struct basic_awaitable_overlapped : public OVERLAPPED
         OffsetHigh = (cur_offset >> 32);
     }
 
-    basic_awaitable_overlapped()
+    awaitable_overlapped()
     {
         Offset = OffsetHigh = 0xFFFFFFFF;
         reset();
     }
 };
 
-#ifdef DISABLE_THREADS
-using awaitable_overlapped = basic_awaitable_overlapped<dummy_mutex>;
-#else
-using awaitable_overlapped = basic_awaitable_overlapped<std::mutex>;
-#endif
+inline typename awaitable_overlapped::out_standing_t awaitable_overlapped::out_standing = 0;
 
-template <typename MUTEX>
-inline typename counter_trait<MUTEX>::type basic_awaitable_overlapped<MUTEX>::out_standing = 0;
-
-template <typename MUTEX>
-struct BasicOverlappedAwaiter
+struct OverlappedAwaiter
 {
-    BasicOverlappedAwaiter(const BasicOverlappedAwaiter&) = delete;
-    BasicOverlappedAwaiter& operator = (const BasicOverlappedAwaiter&) = delete;
-    basic_awaitable_overlapped<MUTEX>& ov;
+    OverlappedAwaiter(const OverlappedAwaiter&) = delete;
+    OverlappedAwaiter& operator = (const OverlappedAwaiter&) = delete;
+    awaitable_overlapped& ov;
 public:
-    BasicOverlappedAwaiter(BasicOverlappedAwaiter&&) = default;
+    OverlappedAwaiter(OverlappedAwaiter&&) = default;
 
-    explicit BasicOverlappedAwaiter(basic_awaitable_overlapped<MUTEX>& ov)
+    explicit OverlappedAwaiter(awaitable_overlapped& ov)
         : ov(ov)
     {
     }
 
     bool await_ready() noexcept
     {
-        std::scoped_lock<MUTEX> l(ov.m);
-        return ov.completed;
+        this->ov.m.lock();
+        if (ov.completed.test_and_set())
+        {
+            return true;
+        }
+        return false;
     }
 
     void await_suspend(std::coroutine_handle<> handle)
     {
-        std::scoped_lock<MUTEX> l(ov.m);
         ov.coro_handle = handle;
+        this->ov.m.unlock();
         ++ awaitable_overlapped::out_standing;
     }
 
     DWORD await_resume()
     {
-        std::scoped_lock<MUTEX> l(ov.m);
         auto NumberOfBytes = ov.NumberOfBytes;
         WSASetLastError(ov.last_error);
         ov.reset();
+        this->ov.m.unlock();
         -- awaitable_overlapped::out_standing;
         return NumberOfBytes;
     }
@@ -139,7 +111,7 @@ inline int pending_works()
 // wait for overlapped to became complete. return NumberOfBytes
 inline ucoro::awaitable<DWORD> get_overlapped_result(awaitable_overlapped& ov)
 {
-    co_return co_await BasicOverlappedAwaiter{ov};
+    co_return co_await OverlappedAwaiter{ov};
 }
 
 // call this after GetQueuedCompletionStatus.
@@ -147,20 +119,18 @@ inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes, DWORD
 {
     auto ov = reinterpret_cast<awaitable_overlapped*>(_ov);
 
-    ov->m.lock();
-
     ov->last_error = last_error;
     ov->NumberOfBytes = NumberOfBytes;
-    ov->completed = true;
 
-    if ( ov->coro_handle == nullptr)
+    ov->m.lock();
+    if (ov->completed.test_and_set())
     {
-        ov->m.unlock();
+        ov->coro_handle.resume();
+        printf("resume continued here\n");
     }
     else
     {
         ov->m.unlock();
-        ov->coro_handle.resume();
     }
 }
 
@@ -196,15 +166,17 @@ inline void run_event_loop(HANDLE iocp_handle)
             LPOVERLAPPED ipOverlap = nullptr;
 
             // get IO status, no wait
+            ::SetLastError(0);
             auto  result = GetQueuedCompletionStatus(
                         iocp_handle,
                         &NumberOfBytes,
                         (PULONG_PTR)&ipCompletionKey,
                         &ipOverlap,
                         0);
+            DWORD last_error = ::GetLastError();
             if (ipOverlap) [[likely]]
             {
-                ops.emplace_back(ipOverlap, NumberOfBytes, GetLastError());
+                ops.emplace_back(ipOverlap, NumberOfBytes, last_error);
             }
             else if (result && (ipCompletionKey == (ULONG_PTR) iocp_handle)) [[unlikely]]
             {
@@ -212,8 +184,10 @@ inline void run_event_loop(HANDLE iocp_handle)
             }
             else
             {
-                if (result == FALSE && GetLastError() == WSA_WAIT_TIMEOUT)
+                if (result == FALSE && last_error == WSA_WAIT_TIMEOUT)
+                {
                     break;
+                }
             }
         }
 
@@ -224,24 +198,26 @@ inline void run_event_loop(HANDLE iocp_handle)
             LPOVERLAPPED ipOverlap = nullptr;
 
             // get IO status, no wait
-            auto  result = GetQueuedCompletionStatus(
+            ::SetLastError(0);
+            auto  ok = GetQueuedCompletionStatus(
                         iocp_handle,
                         &NumberOfBytes,
                         (PULONG_PTR)&ipCompletionKey,
                         &ipOverlap,
                         dwMilliseconds_to_wait);
+            DWORD last_error = ::GetLastError();
 
             if (ipOverlap) [[likely]]
             {
-                ops.emplace_back(ipOverlap, NumberOfBytes, GetLastError());
+                ops.emplace_back(ipOverlap, NumberOfBytes, last_error);
             }
-            else if (result && (ipCompletionKey == (ULONG_PTR) iocp_handle)) [[unlikely]]
+            else if (ok && (ipCompletionKey == (ULONG_PTR) iocp_handle)) [[unlikely]]
             {
                 quit_if_no_work = true;
             }
             else
             {
-                if (GetLastError() == WSA_WAIT_TIMEOUT)
+                if (last_error == WSA_WAIT_TIMEOUT)
                     break;
             }
         }
