@@ -179,6 +179,8 @@ struct response
 		if (ret == FALSE && GetLastError() == ERROR_IO_PENDING)
 			readLength = co_await get_overlapped_result(file_ov);
 
+		bool wait_last_send_op = false;
+
 		do
 		{
 			file_ov.add_offset(readLength);
@@ -187,12 +189,19 @@ struct response
 
 			if (readLength > 0)
 			{
-				if (ov.Internal || ov.InternalHigh)
+				if (wait_last_send_op)
 				{
 					sent = co_await get_overlapped_result(ov);
 					if (sent == 0)
 					{
 						printf("partical body send, quiting...\n");
+
+						if (need_wait_readfile)
+						{
+							CancelIoEx(file, &file_ov);
+							back_readLength = co_await get_overlapped_result(file_ov);
+						}
+
 						co_return -1;
 					}
 				}
@@ -206,21 +215,29 @@ struct response
 					if (result == SOCKET_ERROR)
 					{
 						printf("Error sending body, reconnecting...\n");
-						if (need_wait_readfile){
+						if (need_wait_readfile)
+						{
 							CancelIoEx(file, &file_ov);
 							back_readLength = co_await get_overlapped_result(file_ov);
 						}
 						co_return -1;
 					}
 				}
+				else
+				{
+					wait_last_send_op = true;
+				}
+
 				if (need_wait_readfile)
+				{
 					back_readLength = co_await get_overlapped_result(file_ov);
+				}
 				readLength = back_readLength;
 				std::swap(pri_buf, back_buf);
 			}
 		} while(readLength > 0);
 
-		if (ov.Internal || ov.InternalHigh)
+		if (wait_last_send_op)
 			co_await get_overlapped_result(ov);
 		auto disconnect_result = DisconnectEx(socket, &ov, 0, 0);
 		if (disconnect_result == FALSE && GetLastError() == ERROR_IO_PENDING)
@@ -228,7 +245,7 @@ struct response
 		// printf("file sent successfull...\n");
 		co_return 1;
 	}
-	
+
 	static ucoro::awaitable<int> notFound(SOCKET& socket) {
 		WSABUF wsabuf { .len = sizeof(DEFAULT_ERROR_404) - 1 , .buf = (char*) DEFAULT_ERROR_404 };
 

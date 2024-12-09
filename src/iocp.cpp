@@ -238,6 +238,9 @@ IOCP_DECL BOOL WINAPI CancelIo(_In_ HANDLE hFile)
 
 	// now, enter IOCP emul logic
 	io_uring_cancel_op* op = io_uring_operation_allocator{}.allocate<io_uring_cancel_op>();
+	op->CompletionKey = 0;
+	op->lpCompletionRoutine = 0;
+	op->overlapped_ptr = 0;
 
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
 	{
@@ -264,6 +267,9 @@ IOCP_DECL BOOL WINAPI CancelIoEx(_In_ HANDLE  hFile, _In_opt_ LPOVERLAPPED lpOve
 	// now, enter IOCP emul logic
 	io_uring_cancel_op* op = io_uring_operation_allocator{}.allocate<io_uring_cancel_op>();
 	void* user_data = (void*) lpOverlapped->Internal;
+	op->CompletionKey = 0;
+	op->lpCompletionRoutine = 0;
+	op->overlapped_ptr = 0;
 
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
 	{
@@ -467,6 +473,8 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 	iocp_handle_emu_class* iocp = s->_iocp;
 
 	assert(lpOverlapped);
+
+	lpOverlapped->InternalHigh = (ULONG_PTR) __builtin_extract_return_addr (__builtin_return_address (0));
 
 	if (lpNumberOfBytesSent) [[likely]]
 		*lpNumberOfBytesSent = 0;

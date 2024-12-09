@@ -16,47 +16,54 @@
 #endif
 
 
-struct awaitable_overlapped : public OVERLAPPED
+struct awaitable_overlapped
 {
+    OVERLAPPED ovl;
     DWORD NumberOfBytes;
     DWORD last_error;
     std::coroutine_handle<> coro_handle;
-    std::atomic_flag completed;
+    std::atomic_long completed;
     std::mutex m;
 
     using out_standing_t = std::atomic_long;
 
     static out_standing_t out_standing;
 
+    OVERLAPPED* operator & ()
+    {
+        return &ovl;
+    }
+
     void reset()
     {
-        this->Internal = this->InternalHigh = 0;
-        this->hEvent = NULL;
+        ovl.Internal = ovl.InternalHigh = 0;
+        ovl.hEvent = NULL;
         NumberOfBytes = 0;
+        completed = 0;
         coro_handle = nullptr;
-        completed.clear();
     }
 
     void set_offset(uint64_t offset)
     {
-        this->Offset = offset & 0xFFFFFFFF;
-        this->OffsetHigh = (offset >> 32);
+        ovl.Offset = offset & 0xFFFFFFFF;
+        ovl.OffsetHigh = (offset >> 32);
     }
 
     void add_offset(uint64_t offset)
     {
-        uint64_t cur_offset = this->OffsetHigh;
+        uint64_t cur_offset = ovl.OffsetHigh;
         cur_offset <<= 32;
-        cur_offset += this->Offset;
+        cur_offset += ovl.Offset;
         cur_offset += offset;
-        Offset = cur_offset & 0xFFFFFFFF;
-        OffsetHigh = (cur_offset >> 32);
+        ovl.Offset = cur_offset & 0xFFFFFFFF;
+        ovl.OffsetHigh = (cur_offset >> 32);
     }
 
     awaitable_overlapped()
     {
-        Offset = OffsetHigh = 0xFFFFFFFF;
         reset();
+        ovl.Offset = ovl.OffsetHigh = 0xFFFFFFFF;
+        completed = 0;
     }
 };
 
@@ -78,14 +85,14 @@ public:
     bool await_ready() noexcept
     {
         this->ov.m.lock();
-        if (ov.completed.test_and_set())
+        if (ov.completed)
         {
             return true;
         }
         return false;
     }
 
-    void await_suspend(std::coroutine_handle<> handle)
+    void await_suspend(std::coroutine_handle<> handle) noexcept
     {
         ov.coro_handle = handle;
         ++ awaitable_overlapped::out_standing;
@@ -98,7 +105,6 @@ public:
         WSASetLastError(ov.last_error);
         ov.reset();
         this->ov.m.unlock();
-        -- awaitable_overlapped::out_standing;
         return NumberOfBytes;
     }
 };
@@ -136,14 +142,24 @@ inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes, DWORD
 {
     auto ov = reinterpret_cast<awaitable_overlapped*>(_ov);
 
+    ov->m.lock();
+
     ov->last_error = last_error;
     ov->NumberOfBytes = NumberOfBytes;
 
-    if (ov->completed.test_and_set())
+    long expect_zero = 0;
+
+    if (ov->coro_handle)
     {
-        ov->m.lock();
+        -- awaitable_overlapped::out_standing;
         ov->coro_handle.resume();
     }
+    else
+    {
+        ov->completed = 1;
+        ov->m.unlock();
+    }
+
 }
 
 inline void run_event_loop(HANDLE iocp_handle)
@@ -281,7 +297,7 @@ inline ucoro::awaitable<void> run_on_iocp_thread(HANDLE iocp_handle)
         void await_suspend(std::coroutine_handle<> handle)
         {
             coro->coro_handle = handle;
-            PostQueuedCompletionStatus(iocp_handle, 0, 0, coro.get());
+            PostQueuedCompletionStatus(iocp_handle, 0, 0, &(coro.get()->ovl));
         }
 
         void await_resume()
