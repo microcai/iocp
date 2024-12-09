@@ -136,12 +136,11 @@ public:
 private:
 	string matchStr;
 	ucoro::awaitable<int> getFile(SOCKET& socket, string& route) {
-		string header = "HTTP/1.1 200 OK\r\nContent-Type: " + getContentType(route) + "; charset=UTF-8\r\nConnection: close\r\n\r\n";
+		string header = "HTTP/1.1 200 OK\r\nContent-Type: " + getContentType(route) + "\r\nConnection: close\r\n\r\n";
 		string path = route.substr(matchStr.length(), route.length());
 		string curFilePath = getCurFilePath();
 		string goalFilePth = curFilePath + path;
 
-		DWORD readLength;
 		int sendResult;
 
 		HANDLE file = CreateFile(path.c_str(), GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, INVALID_HANDLE_VALUE);
@@ -152,7 +151,7 @@ private:
 
 		CreateIoCompletionPort(file, co_await ucoro::local_storage_t<HANDLE>{}, 0, 0);
 
-		WSABUF wsabuf { .len = header.length() , .buf = header.data() };
+		WSABUF wsabuf { .len = static_cast<DWORD>(header.length()) , .buf = header.data() };
 
 		awaitable_overlapped ov;
 
@@ -168,32 +167,60 @@ private:
 		awaitable_overlapped file_ov;
 		file_ov.set_offset(0);
 
-		char buffer[1024];
+		std::array<char[BUFFER_N], 2> buffer;
+
+		char * pri_buf = buffer[0];
+		char * back_buf = buffer[1];
+
+		DWORD readLength = 0, back_readLength = BUFFER_N, sent = 0;
+		file_ov.add_offset(readLength);
+		auto ret = ReadFile(file, pri_buf, BUFFER_N, &readLength , &file_ov);
+		if (ret == FALSE && GetLastError() == ERROR_IO_PENDING)
+			readLength = co_await get_overlapped_result(file_ov);
 
 		do
 		{
-			auto ret = ReadFile(file, buffer, sizeof buffer, &readLength , &file_ov);
-			if (ret == FALSE && GetLastError() == ERROR_IO_PENDING)
-				readLength = co_await get_overlapped_result(file_ov);
+			file_ov.add_offset(readLength);
+			ret = ReadFile(file, back_buf, BUFFER_N, &back_readLength , &file_ov);
+			BOOL need_wait_readfile = (ret == FALSE && GetLastError() == ERROR_IO_PENDING);
 
 			if (readLength > 0)
 			{
-				file_ov.add_offset(readLength);
-				WSABUF wsabuf { .len = readLength , .buf = buffer };
+				if (ov.Internal || ov.InternalHigh)
+				{
+					sent = co_await get_overlapped_result(ov);
+					if (sent == 0)
+					{
+						printf("partical body send, quiting...\n");
+						co_return -1;
+					}
+				}
+
+				wsabuf = WSABUF{ .len = readLength , .buf = pri_buf };
+
 				sendResult = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
 				if (sendResult == SOCKET_ERROR && GetLastError() != ERROR_IO_PENDING)
 				{
 					printf("Error sending body, reconnecting...\n");
+					if (need_wait_readfile){
+						CancelIoEx(file, &file_ov);
+						back_readLength = co_await get_overlapped_result(file_ov);
+					}
 					co_return -1;
 				}
-				co_await get_overlapped_result(ov);
+				if (need_wait_readfile)
+					back_readLength = co_await get_overlapped_result(file_ov);
+				readLength = back_readLength;
+				std::swap(pri_buf, back_buf);
 			}
 		} while(readLength > 0);
 
+		if (ov.Internal || ov.InternalHigh)
+			co_await get_overlapped_result(ov);
 		auto disconnect_result = DisconnectEx(socket, &ov, 0, 0);
 		if (disconnect_result == FALSE && GetLastError() == ERROR_IO_PENDING)
 			co_await get_overlapped_result(ov);
-		printf("file sent successfull...\n");
+		// printf("file sent successfull...\n");
 		co_return 1;
 	}
 	ucoro::awaitable<int> notFound(SOCKET& socket) {
@@ -219,10 +246,12 @@ private:
 	{
 		int index = route.find_last_of('.');
 		if (index == -1)
-			return "*/*";
+			return "*/*; charset=UTF-8";
 		string extension = route.substr(index);
 		if (extension == ".html")
-			return "text/html";
+			return "text/html; charset=UTF-8";
+		else if (extension == ".md" || extension == ".txt" || extension == ".cmake")
+			return "text/plain; charset=UTF-8";
 		else if (extension == ".ico")
 			return "image/webp";
 		else if (extension == ".css")
@@ -230,8 +259,8 @@ private:
 		else if (extension == ".jpg")
 			return "image/jpeg";
 		else if (extension == ".js")
-			return "text/javascript";
-		return "*/*";
+			return "text/javascript; charset=UTF-8";
+		return "application/octet-stream";
 	}
 };
 
