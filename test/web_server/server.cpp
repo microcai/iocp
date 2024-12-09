@@ -390,17 +390,16 @@ public:
 			recv_bytes = co_await get_overlapped_result(ov);
 		}
 
-		try {
-			request req = request(buffer, recv_bytes);
-			if (req.requestType < 0) {
-				co_return;
-			}
+		if (recv_bytes < 10)
+			co_return;
 
-			// cout << req.typeName[req.requestType] << " : " << req.filePath << endl;
-			co_await responseClient(req, socket);
+		request req = request(buffer, recv_bytes);
+		if (req.requestType < 0) {
+			co_return;
+		}
 
-		}catch(std::exception&)
-		{}
+		// cout << req.typeName[req.requestType] << " : " << req.filePath << endl;
+		co_await responseClient(req, socket);
 	}
 
 
