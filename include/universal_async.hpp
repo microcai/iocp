@@ -114,14 +114,21 @@ inline ucoro::awaitable<DWORD> get_overlapped_result(awaitable_overlapped& ov)
     co_return co_await OverlappedAwaiter{ov};
 }
 
+inline bool need_to_wait_on_result(int initiator_result, DWORD last_error)
+{
+    if (initiator_result != 0 && last_error != WSA_IO_PENDING) [[unlikely]]
+        return false;
+    return true;
+}
+
 inline ucoro::awaitable<DWORD> get_overlapped_result_with_checking(awaitable_overlapped& ov, int initiator_result, DWORD NumberOfBytes, DWORD last_error = WSAGetLastError())
 {
-    if (initiator_result != 0 && last_error != WSA_IO_PENDING)
+    if (need_to_wait_on_result(initiator_result, last_error)) [[likely]]
     {
-        ov.last_error = last_error;
-        co_return NumberOfBytes;
+        co_return co_await OverlappedAwaiter{ov};
     }
-    co_return co_await OverlappedAwaiter{ov};
+    ov.last_error = last_error;
+    co_return NumberOfBytes;
 }
 
 // call this after GetQueuedCompletionStatus.

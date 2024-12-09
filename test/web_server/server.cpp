@@ -110,8 +110,8 @@ struct auto_sockethandle
 };
 
 
-class response {
-public:
+struct response
+{
 	vector<string> GetRouters;
 	vector<string> PostRouters;
 	response() {
@@ -134,7 +134,7 @@ public:
 		else
 			co_await notFound(socket);
 	}
-private:
+
 	string matchStr;
 	ucoro::awaitable<int> getFile(SOCKET& socket, string& route) {
 		string header = "HTTP/1.1 200 OK\r\nContent-Type: " + getContentType(route) + "\r\nConnection: close\r\n\r\n";
@@ -228,31 +228,14 @@ private:
 		// printf("file sent successfull...\n");
 		co_return 1;
 	}
-	ucoro::awaitable<int> notFound(SOCKET& socket) {
+	
+	static ucoro::awaitable<int> notFound(SOCKET& socket) {
 		WSABUF wsabuf { .len = sizeof(DEFAULT_ERROR_404) - 1 , .buf = (char*) DEFAULT_ERROR_404 };
 
 		awaitable_overlapped ov;
 
 		auto result = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
-		auto last_error = WSAGetLastError();
-		if (result != 0 && last_error != WSA_IO_PENDING)
-		{
-			printf("wsasend overlaping failed\n");
-			if (result == SOCKET_ERROR)
-			{
-				printf("Error sending 404, reconnecting...\n");
-				co_return -1;
-			}
-			else
-			{
-				printf("wsa send errored %d %d\n", result, last_error);
-				co_return -1;
-			}
-		}
-		else
-		{
-			co_await get_overlapped_result(ov);
-		}
+		co_await get_overlapped_result_with_checking(ov, result, 0);
 		co_return 1;
 	}
 	string getCurFilePath() {
@@ -295,7 +278,6 @@ public:
 #ifndef DISABLE_THREADS
 	std::array<HANDLE, 24> eventQueues;
 #endif
-	DWORD recvBytes = 0, flags = 0;
 
 	void start() {
 		printf("Start.......\n");
@@ -334,15 +316,8 @@ public:
 			char outputbuffer[128];
 			DWORD out_size = 0, accepted_size = 0;
 			auto result = AcceptEx(listen_sock, socket, outputbuffer, 0,sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &out_size, &ov);
-			auto last_error = WSAGetLastError();
-			if (result != 0 && last_error != WSA_IO_PENDING)
-			{
-				ov.last_error = last_error;
-			}
-			else
-			{
-				accepted_size = co_await get_overlapped_result(ov);
-			}
+			accepted_size = co_await get_overlapped_result_with_checking(ov, !result, out_size);
+
 			if (ov.last_error == WSAECANCELLED || ov.last_error == ERROR_OPERATION_ABORTED)
 			{
 				printf("requested quit, exiting accept loop\n");
@@ -379,16 +354,7 @@ public:
 		awaitable_overlapped ov;
 		DWORD recv_bytes;
  		auto result = WSARecv(socket, &wsaBuf,1, &recv_bytes, &flags, &ov, NULL);
-		auto last_error = WSAGetLastError();
-		if (result != 0 && last_error != WSA_IO_PENDING)
-		{
-			if (recv_bytes <= 0)
-				co_return;
-		}
-		else
-		{
-			recv_bytes = co_await get_overlapped_result(ov);
-		}
+		recv_bytes = co_await get_overlapped_result_with_checking(ov, result, recv_bytes);
 
 		if (recv_bytes < 10)
 			co_return;
