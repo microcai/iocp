@@ -141,7 +141,7 @@ private:
 		string curFilePath = getCurFilePath();
 		string goalFilePth = curFilePath + path;
 
-		int readLength;
+		DWORD readLength;
 		int sendResult;
 
 		HANDLE file = CreateFile(path.c_str(), GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, INVALID_HANDLE_VALUE);
@@ -152,10 +152,9 @@ private:
 
 		CreateIoCompletionPort(file, co_await ucoro::local_storage_t<HANDLE>{}, 0, 0);
 
+		WSABUF wsabuf { .len = header.length() , .buf = header.data() };
+
 		awaitable_overlapped ov;
-		WSABUF wsabuf;
-		wsabuf.buf = header.data();
-		wsabuf.len = header.length();
 
 		sendResult = WSASend(socket, &wsabuf, 1, 0, 0, &ov, NULL);
 
@@ -163,52 +162,38 @@ private:
 			printf("Error sending header, reconnecting...\n");
 			co_return -1;
 		}
-	
-		co_await get_overlapped_result(ov);
 
-		char buffer[1024];
+		co_await get_overlapped_result(ov);
 
 		awaitable_overlapped file_ov;
 		file_ov.set_offset(0);
 
+		char buffer[1024];
+
 		do
 		{
-			// ov.Offset = ov.OffsetHigh = 0;
-			DWORD readed;
-			SetLastError(0);
-			auto ret = ReadFile(file, buffer, sizeof buffer, &readed , &file_ov);
-			auto err = GetLastError();
-			if (ret == FALSE && err != ERROR_IO_PENDING)
-			{
-				break;
-			}
-
-			if (ret == FALSE && err == ERROR_IO_PENDING)
+			auto ret = ReadFile(file, buffer, sizeof buffer, &readLength , &file_ov);
+			if (ret == FALSE && GetLastError() == ERROR_IO_PENDING)
 				readLength = co_await get_overlapped_result(file_ov);
 
 			if (readLength > 0)
 			{
 				file_ov.add_offset(readLength);
-				wsabuf.buf = buffer;
-				wsabuf.len = readLength;
+				WSABUF wsabuf { .len = readLength , .buf = buffer };
 				sendResult = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
-				err = GetLastError();
-				if (sendResult == SOCKET_ERROR && err != ERROR_IO_PENDING)
+				if (sendResult == SOCKET_ERROR && GetLastError() != ERROR_IO_PENDING)
 				{
 					printf("Error sending body, reconnecting...\n");
-					co_return -1;					
+					co_return -1;
 				}
 				co_await get_overlapped_result(ov);
 			}
-		}while(readLength > 0);
+		} while(readLength > 0);
 
-		awaitable_overlapped disconnect_ov;
-		auto disconnect_result = DisconnectEx(socket, &disconnect_ov, TF_REUSE_SOCKET, 0);
-		auto err = GetLastError();
-		if (disconnect_result == FALSE && err == ERROR_IO_PENDING)
-			co_await get_overlapped_result(disconnect_ov);
-		// printf("file sent successfull...\n");
-
+		auto disconnect_result = DisconnectEx(socket, &ov, 0, 0);
+		if (disconnect_result == FALSE && GetLastError() == ERROR_IO_PENDING)
+			co_await get_overlapped_result(ov);
+		printf("file sent successfull...\n");
 		co_return 1;
 	}
 	ucoro::awaitable<int> notFound(SOCKET& socket) {
@@ -393,7 +378,7 @@ public:
 		DWORD BytesReturned;
 
 		WSAIoctl(listenSocket, SIO_GET_EXTENSION_FUNCTION_POINTER,
-			&disconnectex, sizeof(GUID), &DisconnectEx, sizeof(DisconnectEx), 
+			&disconnectex, sizeof(GUID), &DisconnectEx, sizeof(DisconnectEx),
 			&BytesReturned, 0, 0);
 #endif
 		if (CreateIoCompletionPort((HANDLE)listenSocket6, eventQueue, (ULONG_PTR)0, 0) == NULL)
