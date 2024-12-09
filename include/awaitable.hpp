@@ -269,27 +269,33 @@ namespace ucoro
 	//////////////////////////////////////////////////////////////////////////
 
 	template<typename T>
-	struct final_awaitable : std::suspend_always
+	struct final_awaitable
 	{
-		std::coroutine_handle<> await_suspend(std::coroutine_handle<awaitable_promise<T>> h) noexcept
+		awaitable_promise<T> * _promise;
+
+		bool await_ready () const noexcept {
+			if (_promise->continuation_)
+				return false;
+			// 没有 continuation_ 则说明是最后一层协程帧了.
+			// 返回 true 让编译器自动删除最后一帧.
+			return true;
+		}
+	
+		void await_resume() const noexcept
 		{
-			if (h.promise().continuation_)
-			{
-				// continuation_ 不为空，则 说明 .detach() 被 co_await
-				// 因此，awaitable_detached 析构的时候会顺便撤销自己，所以这里不用 destory
-				// 返回 continuation_，以便让协程框架调用 continuation_.resume()
-				// 这样就把等它的协程唤醒了.
-				return h.promise().continuation_;
-			}
 			// 并且，如果协程处于 .detach() 而没有被 co_await
 			// 则异常一直存储在 promise 里，并没有代码会去调用他的 await_resume() 重抛异常
 			// 所以这里重新抛出来，避免有被静默吞并的异常
-			h.promise().get_value();
-			// 如果 continuation_ 为空，则说明 .detach() 没有被 co_await
-			// 因此，awaitable_detached 对象其实已经析构
-			// 所以必须主动调用 destroy() 以免内存泄漏.
-			h.destroy();
-			return std::noop_coroutine();
+			_promise->get_value();
+		}
+
+		std::coroutine_handle<> await_suspend(std::coroutine_handle<awaitable_promise<T>> h) const noexcept
+		{
+			// continuation_ 不为空，则 说明 .detach() 被 co_await
+			// 因此，awaitable_detached 析构的时候会顺便撤销自己，所以这里不用 destory
+			// 返回 continuation_，以便让协程框架调用 continuation_.resume()
+			// 这样就把等它的协程唤醒了.
+			return h.promise().continuation_;
 		}
 	};
 
@@ -304,7 +310,7 @@ namespace ucoro
 
 		auto final_suspend() noexcept
 		{
-			return final_awaitable<T>{};
+			return final_awaitable<T>{this};
 		}
 
 		auto initial_suspend()
