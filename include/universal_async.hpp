@@ -88,8 +88,8 @@ public:
     void await_suspend(std::coroutine_handle<> handle)
     {
         ov.coro_handle = handle;
-        this->ov.m.unlock();
         ++ awaitable_overlapped::out_standing;
+        this->ov.m.unlock();
     }
 
     DWORD await_resume()
@@ -122,15 +122,10 @@ inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes, DWORD
     ov->last_error = last_error;
     ov->NumberOfBytes = NumberOfBytes;
 
-    ov->m.lock();
     if (ov->completed.test_and_set())
     {
+        ov->m.lock();
         ov->coro_handle.resume();
-        printf("resume continued here\n");
-    }
-    else
-    {
-        ov->m.unlock();
     }
 }
 
