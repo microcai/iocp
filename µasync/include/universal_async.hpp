@@ -65,6 +65,10 @@ struct awaitable_overlapped
         ovl.Offset = ovl.OffsetHigh = 0xFFFFFFFF;
         completed = 0;
     }
+    ~awaitable_overlapped()
+    {
+        assert(coro_handle == nullptr);
+    }
 };
 
 inline typename awaitable_overlapped::out_standing_t awaitable_overlapped::out_standing = 0;
@@ -348,6 +352,7 @@ inline ucoro::awaitable<void> run_on_iocp_thread(HANDLE iocp_handle)
 
         void await_resume()
         {
+            coro->coro_handle = nullptr;
         }
     };
 

@@ -1,4 +1,4 @@
-﻿/*
+/*
 * In the linker options (on the project right-click, linker, input) you need add wsock32.lib or ws2_32.lib to the list of input files.
 */
 #define DISABLE_THREADS 1
@@ -173,13 +173,12 @@ struct response
 		char * pri_buf = buffer[0];
 		char * back_buf = buffer[1];
 
-		DWORD readLength = 0, back_readLength = BUFFER_N, sent = 0;
+		DWORD readLength = 0, back_readLength = 0, sent = 0;
 		file_ov.add_offset(readLength);
 		auto ret = ReadFile(file, pri_buf, BUFFER_N, &readLength , &file_ov);
-		if (ret == FALSE && GetLastError() == ERROR_IO_PENDING)
+		file_ov.last_error = GetLastError();
+		if (ret == FALSE && file_ov.last_error == ERROR_IO_PENDING)
 			readLength = co_await get_overlapped_result(file_ov);
-
-		bool wait_last_send_op = false;
 
 		do
 		{
@@ -189,44 +188,25 @@ struct response
 
 			if (readLength > 0)[[likely]]
 			{
-				if (wait_last_send_op)[[likely]]
-				{
-					sent = co_await get_overlapped_result(ov);
-					if (sent == 0)
-					{
-						printf("partical body send, quiting...\n");
-
-						if (need_wait_readfile)
-						{
-							CancelIoEx(file, &file_ov);
-							back_readLength = co_await get_overlapped_result(file_ov);
-						}
-
-						co_return -1;
-					}
-				}
-
 				wsabuf = WSABUF{ .len = readLength , .buf = pri_buf };
 
 				auto result = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
-				auto last_error = WSAGetLastError();
-			    if (result != 0 && last_error != WSA_IO_PENDING) [[unlikely]]
+				ov.last_error = WSAGetLastError();
+			    if (result == SOCKET_ERROR && ov.last_error == WSA_IO_PENDING) [[likely]]
 				{
-					wait_last_send_op = false;
-					if (result == SOCKET_ERROR)
-					{
-						printf("Error sending body, reconnecting...\n");
-						if (need_wait_readfile)
-						{
-							CancelIoEx(file, &file_ov);
-							back_readLength = co_await get_overlapped_result(file_ov);
-						}
-						co_return -1;
-					}
+					co_await get_overlapped_result(ov);
 				}
-				else [[likely]]
+
+				if (ov.last_error)
 				{
-					wait_last_send_op = true;
+					printf("Error sending body, cancel FILE read...\n");
+					if (need_wait_readfile)
+					{
+						CancelIoEx(file, &file_ov);
+						back_readLength = co_await get_overlapped_result(file_ov);
+					}
+					printf("Error sending body, canceled FILE read...\n");
+					co_return -1;
 				}
 
 				if (need_wait_readfile)
@@ -238,8 +218,7 @@ struct response
 			}
 		} while(readLength > 0);
 
-		if (wait_last_send_op) [[likely]]
-			co_await get_overlapped_result(ov);
+
 		auto disconnect_result = DisconnectEx(socket, &ov, 0, 0);
 		if (disconnect_result == FALSE && GetLastError() == ERROR_IO_PENDING)
 			co_await get_overlapped_result(ov);
