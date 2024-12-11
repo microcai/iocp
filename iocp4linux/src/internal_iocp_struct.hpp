@@ -99,6 +99,19 @@ struct iocp_handle_emu_class final : public base_handle
 		preparer(sqe);
 		// return io_uring_submit(&ring_);
 	}
+
+	template<typename PrepareOP> auto submit_io_immediatly(PrepareOP&& preparer)
+	{
+		std::scoped_lock<nullable_mutex> l(submit_mutex);
+		io_uring_sqe * sqe = io_uring_get_sqe(&ring_);
+		while (!sqe)
+		{
+			io_uring_submit(&ring_);
+			sqe = io_uring_get_sqe(&ring_);
+		}
+		preparer(sqe);
+		return io_uring_submit(&ring_);
+	}
 };
 
 struct SOCKET_emu_class final : public base_handle

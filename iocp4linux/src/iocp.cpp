@@ -217,7 +217,7 @@ IOCP_DECL BOOL WINAPI PostQueuedCompletionStatus(
 	op->overlapped_ptr = lpOverlapped;
 	op->CompletionKey = dwCompletionKey;
 
-	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	iocp->submit_io_immediatly([&](struct io_uring_sqe* sqe)
 	{
 		io_uring_prep_msg_ring_cqe_flags(sqe, iocp->ring_.ring_fd, dwNumberOfBytesTransferred, (__u64) op, 0, IORING_CQE_F_USER);
 		io_uring_sqe_set_data(sqe, op);
