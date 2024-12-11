@@ -84,7 +84,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 				static struct __kernel_timespec min_ts = {.tv_sec = 0, .tv_nsec = 2000 };
 				if (io_uring_ret == -EAGAIN)
 				{
-					std::scoped_lock<nullable_mutex> ll(iocp->submit_mutex);
+					std::scoped_lock<std::mutex> ll(iocp->submit_mutex);
 					io_uring_submit(&iocp->ring_);
 					WSASetLastError(WSA_WAIT_TIMEOUT);
 					return false;
@@ -96,7 +96,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 				if (io_uring_ret == - EAGAIN)
 				{
 					{
-						std::scoped_lock<nullable_mutex> ll(iocp->submit_mutex);
+						std::scoped_lock<std::mutex> ll(iocp->submit_mutex);
 						if (io_uring_sq_ready(&iocp->ring_) > 0)
 							io_uring_submit(&iocp->ring_);
 					}

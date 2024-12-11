@@ -71,12 +71,11 @@ struct nullable_mutex
 struct iocp_handle_emu_class final : public base_handle
 {
 	::io_uring ring_ = { 0 };
-	mutable nullable_mutex submit_mutex;
+	mutable std::mutex submit_mutex;
 	mutable nullable_mutex wait_mutex;
 
 	iocp_handle_emu_class(int NumberOfConcurrentThreads)
-		: submit_mutex(NumberOfConcurrentThreads)
-		, wait_mutex(NumberOfConcurrentThreads)
+		: wait_mutex(NumberOfConcurrentThreads)
 	{
 		ring_.ring_fd = -1;
 	}
@@ -89,7 +88,7 @@ struct iocp_handle_emu_class final : public base_handle
 
 	template<typename PrepareOP> auto submit_io(PrepareOP&& preparer)
 	{
-		std::scoped_lock<nullable_mutex> l(submit_mutex);
+		std::scoped_lock<std::mutex> l(submit_mutex);
 		io_uring_sqe * sqe = io_uring_get_sqe(&ring_);
 		while (!sqe)
 		{
@@ -102,7 +101,7 @@ struct iocp_handle_emu_class final : public base_handle
 
 	template<typename PrepareOP> auto submit_io_immediatly(PrepareOP&& preparer)
 	{
-		std::scoped_lock<nullable_mutex> l(submit_mutex);
+		std::scoped_lock<std::mutex> l(submit_mutex);
 		io_uring_sqe * sqe = io_uring_get_sqe(&ring_);
 		while (!sqe)
 		{
