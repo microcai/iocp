@@ -353,6 +353,10 @@ public:
 
 				handle_connection(socket, binded_event_queue).detach(binded_event_queue);
 			}
+			else
+			{
+				printf("over error\n");
+			}
 		}
 	}
 
@@ -365,8 +369,9 @@ public:
 
 		DWORD flags = 0;
 
-		// co_await run_on_iocp_thread(iocp);
-
+#ifndef DISABLE_THREADS
+		co_await run_on_iocp_thread(iocp);
+#endif
 		auto_sockethandle auto_close(socket);
 
 		awaitable_overlapped ov;
@@ -374,16 +379,16 @@ public:
  		auto result = WSARecv(socket, &wsaBuf,1, &recv_bytes, &flags, &ov, NULL);
 		recv_bytes = co_await get_overlapped_result_with_checking(ov, result, recv_bytes);
 
-		if (recv_bytes < 10)
-			co_return;
+		if (ov.last_error == 0 && recv_bytes > 10)
+		{
+			request req = request(buffer, recv_bytes);
+			if (req.requestType < 0) {
+				co_return;
+			}
 
-		request req = request(buffer, recv_bytes);
-		if (req.requestType < 0) {
-			co_return;
+			// cout << req.typeName[req.requestType] << " : " << req.filePath << endl;
+			co_await responseClient(req, socket);
 		}
-
-		// cout << req.typeName[req.requestType] << " : " << req.filePath << endl;
-		co_await responseClient(req, socket);
 	}
 
 
