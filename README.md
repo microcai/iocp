@@ -88,15 +88,15 @@ of what wepoll does.
 
 以下结果是运行 例子列程 ./test/web_server/server.cpp 所测得：
 
-![img](doc/img/test_with_wrk.jpg)
+![img](doc/img/test_with_wrk.png)
 
-在请求一个 404 路径的时候，测试的是纯粹的网络服务能力。能达到每秒超过十万请求。
+在请求一个 404 路径的时候，测试的是纯粹的网络服务能力。能达到每秒接受超过十一万连接。
 
 而第二个测试，是测试下载一个 1MiB 的文件。
 而 server.cpp 内部特意使用了 1kb 的小 buffer 进行文件传输。
 也就是每次只从文件系统读取1kb 字节，然后向 socket 发送 1kb 字节。
 
-速度达到 1.28GB/s。也就是能完全跑满 10G 网卡。
+速度达到 1.5GB/s。也就是能完全跑满 10G 网卡。
 
 如果使用更大的 buffer 进行数据搬运。那么跑满 100G 网络不在话下。
 
