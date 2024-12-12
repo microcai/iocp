@@ -443,7 +443,7 @@ public:
 		int v = 1;
 		setsockopt(listenSocket6, SOL_SOCKET, SO_REUSEADDR, (char*)&v, sizeof (v));
 		#ifdef IPV6_V6ONLY
-		setsockopt(listenSocket6, SOL_IPV6, IPV6_V6ONLY, (char*)&v, sizeof (v));
+		setsockopt(listenSocket6, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&v, sizeof (v));
 		#endif
 		setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, (char*)&v, sizeof (v));
 
