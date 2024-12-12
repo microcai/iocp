@@ -70,25 +70,25 @@ of what wepoll does.
 
 已经实现的接口有
 
-| IOCP 接口    | 状态 |
-| -------- | ------- |
-| CreateIoCompletionPort | ✅    |
-| GetQueuedCompletionStatus  | ✅ |
-| PostQueuedCompletionStatus   |  ✅  |
-| WSASend    |  ✅  |
-| WSARecv    |  ✅  |
-| WSASendTo    |  ✅  |
-| WSARecvFrom    |  ✅  |
-| AcceptEx   |  ✅  |
-| WSAConnectEx |✅ |
-| DisconnectEx |✅ |
-| CreateFileA |✅ |
-| CreateFileW |✅ |
-| ReadFile |✅ |
-| WriteFile | ✅ |
-| CloseHandle |✅ |
-| CancelIo|✅|
-| CancelIoEx|✅|
+| IOCP 接口                  | io_uring 后端 实现 状态 | asio 后端 （epoll） 实现状态 |
+| -------------------------- | ----------------------- | ---------------------------- |
+| CreateIoCompletionPort     | ✅                       | ✅                            |
+| GetQueuedCompletionStatus  | ✅                       | ✅                            |
+| PostQueuedCompletionStatus | ✅                       | ✅                            |
+| WSASend                    | ✅                       | ✅                            |
+| WSARecv                    | ✅                       | ✅                            |
+| WSASendTo                  | ✅                       | 实现中                     |
+| WSARecvFrom                | ✅                       | 实现中                     |
+| AcceptEx                   | ✅                       | ✅                            |
+| WSAConnectEx               | ✅                       | ✅                            |
+| DisconnectEx               | ✅                       | ✅                            |
+| CreateFileA                | ✅                       | ✅                            |
+| CreateFileW                | ✅                       | ✅                            |
+| ReadFile                   | ✅                       | API 可用，为同步模拟             |
+| WriteFile                  | ✅                       | API 可用，为同步模拟             |
+| CloseHandle                | ✅                       | ✅                            |
+| CancelIo                   | ✅                       | 不支持                         |
+| CancelIoEx                 | ✅                       | ✅                            |
 
 
 # Performance
