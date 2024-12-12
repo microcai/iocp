@@ -45,10 +45,12 @@ struct iocp_handle_emu_class final : public base_handle
 
 	std::mutex result_mutex;
 	std::deque<asio_operation_ptr> results_;
+	asio::executor_work_guard<asio::any_io_executor> work_guard;
 
 	// std::map<OVERLAPPED*, asio_operation_ptr> pending_io_;
 
 	iocp_handle_emu_class()
+		: work_guard(io_.get_executor())
 	{
 	}
 
