@@ -85,25 +85,34 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 
 	std::unique_ptr<asio_operation> complete_result;
 
-	std::chrono::steady_clock::time_point until = std::chrono::steady_clock::now() + std::chrono::milliseconds(dwMilliseconds);
-
+	if ( dwMilliseconds == 0)
 	{
+		iocp->io_.poll();
 		std::scoped_lock<std::mutex> l(iocp->result_mutex);
-
+		if (iocp->results_.empty())
+		{
+			SetLastError(WSA_WAIT_TIMEOUT);
+			return false;
+		}
+		else
+		{
+			complete_result = std::move(iocp->results_.front());
+			iocp->results_.pop_front();
+		}
+	}
+	else
+	{
+		std::chrono::steady_clock::time_point until = std::chrono::steady_clock::now() + std::chrono::milliseconds(dwMilliseconds);
+		std::scoped_lock<std::mutex> l(iocp->result_mutex);
 		while (iocp->results_.empty())
 		{
 			iocp->result_mutex.unlock();
-			if ( dwMilliseconds == 0)
-			{
-				iocp->io_.poll();
-			}
+			if (dwMilliseconds == INFINITE)
+				iocp->io_.run_one();
 			else
-			{
 				iocp->io_.run_one_until(until);
-			}
 			iocp->result_mutex.lock();
 		}
-
 		complete_result = std::move(iocp->results_.front());
 		iocp->results_.pop_front();
 	}
@@ -166,8 +175,9 @@ IOCP_DECL SOCKET WSASocket(_In_ int af, _In_ int type, _In_ int protocol, _In_ L
 						   _In_ SOCKET g, _In_ DWORD dwFlags)
 {
 	assert(lpProtocolInfo == 0);
-	auto ret = new SOCKET_emu_class{af, type};
-	return ret;
+	if (dwFlags == WSA_FLAG_FAKE_CREATION)
+		return new SOCKET_emu_class{-1};
+	return new SOCKET_emu_class{af, type};
 }
 
 IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _In_ PVOID lpOutputBuffer,
@@ -766,3 +776,5 @@ IOCP_DECL BOOL WriteFile(
 
 	return write_ret > 0;
 }
+
+asio::io_context SOCKET_emu_class::internal_fake_io_context;

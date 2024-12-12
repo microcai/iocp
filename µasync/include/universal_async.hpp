@@ -154,6 +154,7 @@ inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes, DWORD
         if (ov->pending.test())
         {
             // printf("resume on OVERLAPED = %p\n", _ov);
+            ov->ready.test_and_set();
             ov->coro_handle.resume();
         }
     }

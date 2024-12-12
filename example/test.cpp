@@ -57,7 +57,7 @@ ucoro::awaitable<void> echo_sever_client_session(SOCKET client_socket)
 
 	auto disconnect_result = DisconnectEx(client_socket, &ov, 0, 0);
 	ov.last_error = ::WSAGetLastError();
-	if (!(!disconnect_result && ov.last_error != WSA_IO_PENDING))
+	if (!(disconnect_result && ov.last_error != WSA_IO_PENDING))
 		co_await get_overlapped_result(ov);
 }
 
@@ -130,7 +130,7 @@ int main()
 		WSAIoctl(listener6, SIO_GET_EXTENSION_FUNCTION_POINTER,
 			&disconnectex, sizeof(GUID), &DisconnectEx, sizeof(DisconnectEx),
 			&BytesReturned, 0, 0);
-#endif	
+#endif
 	// listener = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 	// if (listener == INVALID_SOCKET)
 	// {

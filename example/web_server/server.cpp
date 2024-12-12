@@ -228,7 +228,7 @@ struct response
 
 		auto disconnect_result = DisconnectEx(socket, &ov, 0, 0);
 		ov.last_error = ::WSAGetLastError();
-		if (!(!disconnect_result && ov.last_error != WSA_IO_PENDING))
+		if (!(disconnect_result && ov.last_error != WSA_IO_PENDING))
 			co_await get_overlapped_result(ov);
 		#ifdef _DEBUG
 		printf("file sent successfull...\n");

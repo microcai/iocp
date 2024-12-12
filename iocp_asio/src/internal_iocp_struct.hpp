@@ -69,6 +69,8 @@ struct SOCKET_emu_class final : public base_handle
 
 	using variant_sock = std::variant<normal_file, tcp_sock, udp_sock, acceptor>;
 
+	static asio::io_context internal_fake_io_context;
+
 	variant_sock sock_;
 
 	int af_family;
@@ -79,8 +81,9 @@ struct SOCKET_emu_class final : public base_handle
 		, _completion_key(0)
 		, af_family(af_family)
 		, type(type)
-		, sock_(std::in_place_type_t<normal_file>{}, -1)
+		, sock_(std::in_place_type_t<acceptor>{}, internal_fake_io_context)
 	{
+		accept_socket().open(af_family == AF_INET6 ? asio::ip::tcp::v6() : asio::ip::tcp::v4());
 		// 一个空 socket, 但是其实真正创建的地方，是在
 		// ConnectEx/AcceptEx 两个地方。
 	}
@@ -117,15 +120,18 @@ struct SOCKET_emu_class final : public base_handle
 		{
 			case 1:
 				fd = release_native_fd();
-				sock_.emplace<tcp_sock>( iocp->io_, fd );
+				sock_.emplace<tcp_sock>( iocp->io_);
+				tcp_socket().assign(af_family == AF_INET6 ? asio::ip::tcp::v6() : asio::ip::tcp::v4() , fd);
 				break;
 			case 2:
 				fd = release_native_fd();
-				sock_.emplace<udp_sock>( iocp->io_, fd );
+				sock_.emplace<udp_sock>( iocp->io_);
+				udp_socket().assign(af_family == AF_INET6 ? asio::ip::udp::v6() : asio::ip::udp::v4() , fd);
 				break;
 			case 3:
 				fd = release_native_fd();
-				sock_.emplace<acceptor>( iocp->io_, fd );
+				sock_.emplace<acceptor>( iocp->io_);
+				accept_socket().assign(af_family == AF_INET6 ? asio::ip::tcp::v6() : asio::ip::tcp::v4() , fd);
 				break;
 			// case 4:
 			// 	sock_.emplace<4>( iocp, fd );
@@ -176,6 +182,7 @@ struct SOCKET_emu_class final : public base_handle
 
 	tcp_sock& tcp_socket() { return std::get<tcp_sock>(sock_); };
 	udp_sock& udp_socket() { return std::get<udp_sock>(sock_); };
+	acceptor& accept_socket() { return std::get<acceptor>(sock_); };
 
 	template<typename Handler>
 	void async_accept(SOCKET_emu_class* into, Handler&& handler)
