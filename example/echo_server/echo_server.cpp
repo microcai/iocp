@@ -7,6 +7,8 @@
 #include <windows.h>
 #include <winsock2.h>
 #include <mswsock.h>
+#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "Mswsock.lib")
 #else
 #include "iocp.h"
 #endif
@@ -138,7 +140,7 @@ static void bind_listening_socket(void)
 
    prepare_endpoint(&sin, SERVER_ADDRESS, SERVICE_PORT);
    
-   if (bind(listener, (sockaddr*) &sin, sizeof(sin)) == SOCKET_ERROR)
+   if (::bind(listener, (sockaddr*) &sin, sizeof(sin)) == SOCKET_ERROR)
    {
       printf("* error in bind!\n");
       exit(1);

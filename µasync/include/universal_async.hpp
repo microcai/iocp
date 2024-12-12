@@ -11,6 +11,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mswsock.h>
+#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "Mswsock.lib")
 #else
 #include "iocp.h"
 #endif
@@ -89,7 +91,7 @@ public:
     {
     }
 
-    constexpr bool await_ready() const noexcept
+    bool await_ready() noexcept
     {
         return ov.ready.test();
     }
