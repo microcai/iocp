@@ -57,7 +57,7 @@ ucoro::awaitable<void> echo_sever_client_session(SOCKET client_socket)
 
 	auto disconnect_result = DisconnectEx(client_socket, &ov, 0, 0);
 	ov.last_error = ::WSAGetLastError();
-	if (!(disconnect_result && ov.last_error != WSA_IO_PENDING))
+	if (!(!disconnect_result && ov.last_error != WSA_IO_PENDING))
 		co_await get_overlapped_result(ov);
 }
 

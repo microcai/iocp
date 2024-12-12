@@ -618,8 +618,8 @@ IOCP_DECL BOOL DisconnectEx(
 	std::scoped_lock<std::mutex> l(iocp->result_mutex);
 	iocp->results_.emplace_back(op);
 
-	WSASetLastError(ERROR_IO_PENDING);
-	return FALSE;
+	WSASetLastError(0);
+	return TRUE;
 }
 
 IOCP_DECL int closesocket(SOCKET s)
