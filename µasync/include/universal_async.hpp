@@ -38,6 +38,10 @@ struct awaitable_overlapped
         return &ovl;
     }
 
+    const void * addr () const {
+        return this;
+    }
+
     void reset()
     {
         ovl.Internal = ovl.InternalHigh = 0;
@@ -147,8 +151,11 @@ inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes, DWORD
 
         // make sure
         assert(ov->coro_handle);
-        ov->ready.test_and_set();
-        ov->coro_handle.resume();
+        if (ov->pending.test())
+        {
+            // printf("resume on OVERLAPED = %p\n", _ov);
+            ov->coro_handle.resume();
+        }
     }
     else
     {

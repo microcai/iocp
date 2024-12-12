@@ -155,8 +155,10 @@ struct response
 		awaitable_overlapped ov;
 
 		sendResult = WSASend(socket, &wsabuf, 1, 0, 0, &ov, NULL);
+		ov.last_error = WSAGetLastError();
 
-		if (sendResult == SOCKET_ERROR && GetLastError() != ERROR_IO_PENDING) {
+	    if (sendResult != 0 && ov.last_error != WSA_IO_PENDING)
+		{
 			// printf("Error sending header, reconnecting...\n");
 			co_return -1;
 		}
@@ -175,7 +177,7 @@ struct response
 		file_ov.add_offset(readLength);
 		auto ret = ReadFile(file, pri_buf, BUFFER_N, &readLength , &file_ov);
 		file_ov.last_error = GetLastError();
-		if (ret == FALSE && file_ov.last_error == ERROR_IO_PENDING)
+		if (!(!ret && file_ov.last_error != ERROR_IO_PENDING && file_ov.last_error != ERROR_MORE_DATA))
 			readLength = co_await get_overlapped_result(file_ov);
 
 		while (readLength > 0)
@@ -184,13 +186,17 @@ struct response
 			ret = ReadFile(file, back_buf, BUFFER_N, &back_readLength , &file_ov);
 			file_ov.last_error = GetLastError();
 
-			bool need_wait_readfile = (ret == FALSE && file_ov.last_error == ERROR_IO_PENDING);
+			bool read_file_pending = !(!ret && file_ov.last_error != ERROR_IO_PENDING && file_ov.last_error != ERROR_MORE_DATA);
 
 			WSABUF wsabuf{ .len = readLength , .buf = pri_buf };
 
 			auto result = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
 			ov.last_error = WSAGetLastError();
-			if (result == SOCKET_ERROR && ov.last_error == WSA_IO_PENDING) [[likely]]
+  			if (result != 0 && ov.last_error != WSA_IO_PENDING)
+			{
+				co_return -1;
+			}
+			else
 			{
 				co_await get_overlapped_result(ov);
 			}
@@ -200,7 +206,7 @@ struct response
 				#ifdef _DEBUG
 				printf("Error sending body, cancel FILE read...\n");
 				#endif
-				if (need_wait_readfile)
+				if (read_file_pending)
 				{
 					// CancelIoEx(file, &file_ov);
 					back_readLength = co_await get_overlapped_result(file_ov);
@@ -211,7 +217,7 @@ struct response
 				co_return -1;
 			}
 
-			if (need_wait_readfile)
+			if (read_file_pending)
 			{
 				back_readLength = co_await get_overlapped_result(file_ov);
 			}
@@ -221,7 +227,7 @@ struct response
 		};
 
 		auto disconnect_result = DisconnectEx(socket, &ov, 0, 0);
-		if (disconnect_result == FALSE && WSAGetLastError() == ERROR_IO_PENDING)
+		if (!(disconnect_result != FALSE && WSAGetLastError() != ERROR_IO_PENDING))
 			co_await get_overlapped_result(ov);
 		#ifdef _DEBUG
 		printf("file sent successfull...\n");
@@ -236,8 +242,14 @@ struct response
 
 		auto result = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
 		ov.last_error = WSAGetLastError();
-		if (result == SOCKET_ERROR && ov.last_error == WSA_IO_PENDING)
+		if (!(result != 0 && ov.last_error != WSA_IO_PENDING))
+		{
 			co_await get_overlapped_result(ov);
+		}
+		else
+		{
+			printf("send successfull without await\n");
+		}
 		co_return 1;
 	}
 	string getCurFilePath() {
@@ -319,7 +331,7 @@ public:
 			DWORD accepted_size = 0;
 			auto result = AcceptEx(listen_sock, socket, outputbuffer, 0,sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &accepted_size, &ov);
 			ov.last_error = WSAGetLastError();
-			if (result == FALSE && ov.last_error == WSA_IO_PENDING)
+			if (!result && ov.last_error != WSA_IO_PENDING)
 				accepted_size = co_await get_overlapped_result(ov);
 
 			if (ov.last_error == WSAECANCELLED || ov.last_error == ERROR_OPERATION_ABORTED || ov.last_error == ERROR_NETNAME_DELETED)
@@ -329,6 +341,7 @@ public:
 			}
 			else if (ov.last_error == 0)
 			{
+				CreateIoCompletionPort((HANDLE)socket, binded_event_queue, 0, 0);
 				#ifdef _WIN32
 				sockaddr* localaddr, *remoteaddr;
 				socklen_t localaddr_len, remoteaddr_len;
@@ -351,7 +364,6 @@ public:
 #ifndef DISABLE_THREADS
 		co_await run_on_iocp_thread(iocp);
 #endif
-		CreateIoCompletionPort((HANDLE)socket, iocp, 0, 0);
 
 		auto_sockethandle auto_close(socket);
 
@@ -364,9 +376,15 @@ public:
 		awaitable_overlapped ov;
 		DWORD recv_bytes = BUFFER_N;
  		auto result = WSARecv(socket, &wsaBuf,1, &recv_bytes, &flags, &ov, NULL);
-		ov.last_error = WSAGetLastError();
-		if (result == SOCKET_ERROR && ov.last_error == WSA_IO_PENDING)
+		ov.last_error = GetLastError();
+		if (result != 0 && ov.last_error != WSA_IO_PENDING)
+		{
+			co_return;
+		}
+		else
+		{
 			recv_bytes = co_await get_overlapped_result(ov);
+		}
 
 		if (ov.last_error == 0 && recv_bytes > 10)
 		{
