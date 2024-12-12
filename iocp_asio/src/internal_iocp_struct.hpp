@@ -104,11 +104,13 @@ struct SOCKET_emu_class final : public base_handle
 
 	void construct_tcp_socket()
 	{
+		type = SOCK_STREAM;
 		sock_.emplace<tcp_sock>(_iocp->io_);
 	}
 
 	void construct_udp_socket()
 	{
+		type = SOCK_DGRAM;
 		sock_.emplace<udp_sock>(_iocp->io_);
 	}
 

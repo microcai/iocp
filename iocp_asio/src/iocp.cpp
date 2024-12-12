@@ -610,8 +610,16 @@ IOCP_DECL BOOL DisconnectEx(
 	// asio does not support async shutdown, do it sync
 	shutdown(s->native_handle(), SHUT_RDWR);
 
-	WSASetLastError(0);
-	return TRUE;
+
+	asio_operation* op = new asio_operation { lpOverlapped, s->_completion_key, 0, 0};
+	// op->lpCompletionRoutine = lpCompletionRoutine;
+	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
+
+	std::scoped_lock<std::mutex> l(iocp->result_mutex);
+	iocp->results_.emplace_back(op);
+
+	WSASetLastError(ERROR_IO_PENDING);
+	return FALSE;
 }
 
 IOCP_DECL int closesocket(SOCKET s)
@@ -745,10 +753,18 @@ IOCP_DECL BOOL ReadFile(
 	if (lpNumberOfBytesRead)
 		*lpNumberOfBytesRead = readed;
 
-	if (readed == 0)
-	{
-		SetLastError(ERROR_HANDLE_EOF);
-	}
+	asio_operation* op = new asio_operation;
+	// op->lpCompletionRoutine = lpCompletionRoutine;
+	op->overlapped_ptr = lpOverlapped;
+	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
+	op->CompletionKey = s->_completion_key;
+	op->last_error = readed == 0 ? ERROR_HANDLE_EOF : 0;
+	op->NumberOfBytes = readed;
+
+	std::scoped_lock<std::mutex> l(iocp->result_mutex);
+	iocp->results_.emplace_back(op);
+
+	SetLastError(ERROR_IO_PENDING);
 
 	return readed > 0;
 }
@@ -768,11 +784,27 @@ IOCP_DECL BOOL WriteFile(
 		return false;
 	}
 
+	iocp_handle_emu_class* iocp = s->_iocp;
 
 	auto write_ret = write(s->native_handle(), lpBuffer, nNumberOfBytesToWrite);
 
 	if (lpNumberOfBytesWritten)
 		*lpNumberOfBytesWritten = write_ret;
+
+
+	// now, enter IOCP emul logic
+	asio_operation* op = new asio_operation;
+	// op->lpCompletionRoutine = lpCompletionRoutine;
+	op->overlapped_ptr = lpOverlapped;
+	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
+	op->CompletionKey = s->_completion_key;
+	op->last_error = errno;
+	op->NumberOfBytes = write_ret;
+
+	std::scoped_lock<std::mutex> l(iocp->result_mutex);
+	iocp->results_.emplace_back(op);
+
+	SetLastError(ERROR_IO_PENDING);
 
 	return write_ret > 0;
 }
