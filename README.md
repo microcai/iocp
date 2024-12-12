@@ -16,7 +16,14 @@
 
 - iocp4linux
 
-    linux版的 iocp 实现。 windows 上无需使用
+    linux版的 iocp 实现。 windows 上无需使用。
+
+- iocp_asio
+
+    使用 asio 作为后端实现的 IOCP 接口。windows 上无需使用。
+    意味着 将 asio 支持的所有系统都能提供 iocp 了。
+    除非找到 liburing.so 则会自动使用这个作为后端。
+
 
 - µasync
 
