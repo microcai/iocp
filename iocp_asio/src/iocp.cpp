@@ -287,6 +287,9 @@ IOCP_DECL BOOL WSAConnectEx(
 
 	assert(lpOverlapped);
 
+	if (s->type == SOCK_STREAM)
+		s->construct_tcp_socket();
+
 	struct connect_op : asio_operation
 	{
 		PVOID lpSendBuffer;
