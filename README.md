@@ -91,6 +91,7 @@ of what wepoll does.
 ![img](doc/img/test_with_wrk.png)
 
 在请求一个 404 路径的时候，测试的是纯粹的网络服务能力。能达到每秒接受超过十一万连接。
+查看源码可知这个 例程 并没有使用 HTTP 协议的 connection:keep-alive 能力。所以这就全靠内核硬扛下来的十一万个连接。
 
 而第二个测试，是测试下载一个 1MiB 的文件。
 而 server.cpp 内部特意使用了 1kb 的小 buffer 进行文件传输。
