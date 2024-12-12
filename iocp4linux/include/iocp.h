@@ -50,7 +50,7 @@ typedef const wchar_t* LPCWSTR;
 
 typedef int* LPINT;
 typedef unsigned long ULONG_PTR, *PULONG_PTR;
-typedef uint16_t WORD, LPWORD;
+typedef uint16_t WORD, *LPWORD;
 typedef uint32_t DWORD, *LPDWORD, *DWORD_PTR;
 typedef bool BOOL; // bool is from stdbool if C99 mode.
 typedef void *PVOID, *LPVOID;
@@ -75,10 +75,17 @@ typedef struct _OVERLAPPED
 	union {
 		struct
 		{
+#ifdef __LITTLE_ENDIAN__
 			DWORD Offset;
 			DWORD OffsetHigh;
+#else
+			DWORD OffsetHigh;
+			DWORD Offset;
+#endif
 		};
 		PVOID Pointer;
+    // this is not part of WIN32 abi.
+    // but just internal quick usage.
     uint64_t offset_64;
 	};
 	HANDLE hEvent;
@@ -279,6 +286,7 @@ enum
 
 	ERROR_BUSY = 0xAA,
 	ERROR_IO_PENDING = 997,
+  ERROR_MORE_DATA = 998,
 
   WSAEINTR = EINTR,
   WSAEWOULDBLOCK = EWOULDBLOCK,

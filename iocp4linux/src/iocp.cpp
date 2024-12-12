@@ -921,13 +921,9 @@ IOCP_DECL BOOL ReadFile(
 	op->overlapped_ptr = lpOverlapped;
 	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
-	__u64 offset = lpOverlapped->OffsetHigh;
-	offset <<= 32;
-	offset += lpOverlapped->Offset;
-
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
 	{
-		io_uring_prep_read(sqe, s->native_handle(), lpBuffer, nNumberOfBytesToRead, offset);
+		io_uring_prep_read(sqe, s->native_handle(), lpBuffer, nNumberOfBytesToRead, lpOverlapped->offset_64);
 		io_uring_sqe_set_data(sqe, op);
 	});
 
@@ -970,11 +966,9 @@ IOCP_DECL BOOL WriteFile(
 	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
 
-	__u64 offset = lpOverlapped->Offset + ( static_cast<__u64>(lpOverlapped->OffsetHigh) << 32 );
-
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
 	{
-		io_uring_prep_write(sqe, s->native_handle(), lpBuffer, nNumberOfBytesToWrite, offset);
+		io_uring_prep_write(sqe, s->native_handle(), lpBuffer, nNumberOfBytesToWrite, lpOverlapped->offset_64);
 		io_uring_sqe_set_data(sqe, op);
 	});
 
