@@ -22,8 +22,9 @@ struct awaitable_overlapped
     DWORD NumberOfBytes;
     DWORD last_error;
     std::coroutine_handle<> coro_handle;
-    std::atomic_long completed;
-    std::mutex m;
+    std::atomic_flag coro_handle_set;
+    std::atomic_flag ready;
+    std::atomic_flag pending;
 
     using out_standing_t = std::atomic_long;
 
@@ -31,6 +32,7 @@ struct awaitable_overlapped
 
     OVERLAPPED* operator & ()
     {
+        ready.clear();
         return &ovl;
     }
 
@@ -39,7 +41,7 @@ struct awaitable_overlapped
         ovl.Internal = ovl.InternalHigh = 0;
         ovl.hEvent = NULL;
         NumberOfBytes = 0;
-        completed = 0;
+        coro_handle_set.clear();
         coro_handle = nullptr;
     }
 
@@ -63,7 +65,12 @@ struct awaitable_overlapped
     {
         reset();
         ovl.Offset = ovl.OffsetHigh = 0xFFFFFFFF;
-        completed = 0;
+
+    }
+
+    ~awaitable_overlapped()
+    {
+        assert(pending.test() == false);
     }
 };
 
@@ -82,30 +89,27 @@ public:
     {
     }
 
-    bool await_ready() noexcept
+    constexpr bool await_ready() const noexcept
     {
-        this->ov.m.lock();
-        if (ov.completed)
-        {
-            return true;
-        }
-        return false;
+        return ov.ready.test();
     }
 
-    void await_suspend(std::coroutine_handle<> handle) noexcept
+    bool await_suspend(std::coroutine_handle<> handle) noexcept
     {
         ov.coro_handle = handle;
-        ++ awaitable_overlapped::out_standing;
-        this->ov.m.unlock();
+        ov.coro_handle_set.notify_all();
+        if (ov.coro_handle_set.test_and_set())
+        {
+            return false;
+        }
+        ov.pending.test_and_set();
+        return true;
     }
 
-    DWORD await_resume()
+    void await_resume()
     {
-        auto NumberOfBytes = ov.NumberOfBytes;
-        WSASetLastError(ov.last_error);
-        ov.reset();
-        this->ov.m.unlock();
-        return NumberOfBytes;
+        ov.pending.clear();
+        assert(ov.ready.test());
     }
 };
 
@@ -117,24 +121,14 @@ inline int pending_works()
 // wait for overlapped to became complete. return NumberOfBytes
 inline ucoro::awaitable<DWORD> get_overlapped_result(awaitable_overlapped& ov)
 {
-    co_return co_await OverlappedAwaiter{ov};
-}
+    ++ awaitable_overlapped::out_standing;
+    co_await OverlappedAwaiter{ov};
+    -- awaitable_overlapped::out_standing;
 
-inline bool need_to_wait_on_result(int initiator_result, DWORD last_error)
-{
-    if (initiator_result != 0 && last_error != WSA_IO_PENDING) [[unlikely]]
-        return false;
-    return true;
-}
-
-inline ucoro::awaitable<DWORD> get_overlapped_result_with_checking(awaitable_overlapped& ov, int initiator_result, DWORD NumberOfBytes, DWORD last_error = WSAGetLastError())
-{
-    if (need_to_wait_on_result(initiator_result, last_error)) [[likely]]
-    {
-        co_return co_await OverlappedAwaiter{ov};
-    }
-    ov.last_error = last_error;
-    co_return NumberOfBytes;
+    auto R = ov.NumberOfBytes;
+    WSASetLastError(ov.last_error);
+    ov.reset();
+    co_return R;
 }
 
 // call this after GetQueuedCompletionStatus.
@@ -142,25 +136,24 @@ inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes, DWORD
 {
     auto ov = reinterpret_cast<awaitable_overlapped*>(_ov);
 
-    ov->m.lock();
-
     ov->last_error = last_error;
     ov->NumberOfBytes = NumberOfBytes;
 
-    long expect_zero = 0;
-
-    if (ov->coro_handle)
+    if (ov->coro_handle_set.test_and_set())
     {
-        -- awaitable_overlapped::out_standing;
+        ov->coro_handle_set.wait(false);
+
+        // make sure
+        assert(ov->coro_handle);
+        ov->ready.test_and_set();
         ov->coro_handle.resume();
     }
     else
     {
-        ov->completed = 1;
-        ov->m.unlock();
+        ov->ready.test_and_set();
     }
-
 }
+
 #if _WIN32
 inline void run_event_loop(HANDLE iocp_handle)
 {
@@ -343,14 +336,15 @@ inline ucoro::awaitable<void> run_on_iocp_thread(HANDLE iocp_handle)
         void await_suspend(std::coroutine_handle<> handle)
         {
             coro->coro_handle = handle;
+            coro->coro_handle_set.test_and_set();
             PostQueuedCompletionStatus(iocp_handle, 0, 0, &(coro.get()->ovl));
         }
 
         void await_resume()
         {
+            // coro->reset();
         }
     };
-
 
     co_await SwitchIOCPAwaitable{iocp_handle};
 }

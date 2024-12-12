@@ -34,7 +34,7 @@ struct base_handle
 		if (--ref_count == 0)
 		{
 			delete this;
-		}		
+		}
 	}
 
 	int native_handle() {return _socket_fd; }
@@ -50,19 +50,19 @@ struct nullable_mutex
 
 	void lock()
 	{
-		if (m)
+		// if (m)
 			m->lock();
 	}
 
 	void unlock()
 	{
-		if (m)
+		// if (m)
 			m->unlock();
 	}
 
 	nullable_mutex(int thread_hint)
 	{
-		if (thread_hint != 1)
+		// if (thread_hint != 1)
 			m.emplace();
 	}
 

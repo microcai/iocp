@@ -398,6 +398,7 @@ namespace ucoro
 				else
 				{
 					current_coro_handle_.resume();
+					// assert(current_coro_handle_.done());
 				}
 			}
 		}

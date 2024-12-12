@@ -161,7 +161,9 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 			{
 				*lpCompletionKey = op->CompletionKey;
 				*lpOverlapped = op->overlapped_ptr;
-				op->do_complete(cqe, 0);
+				op->do_complete(cqe, lpNumberOfBytes);
+				op->overlapped_ptr = 0;
+				op->CompletionKey = 0;
 				io_uring_cqe_seen(&iocp->ring_, cqe);
 				return true;
 			}
@@ -182,7 +184,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 
 		io_uring_operation_allocator{}.deallocate(op, op->size);
 
-		if (lpOverlapped == NULL) [[unlikely]]
+		if (*lpOverlapped == NULL) [[unlikely]]
 		{
 			if (dwMilliseconds == UINT32_MAX) [[likely]]
 			{
@@ -208,6 +210,7 @@ IOCP_DECL BOOL WINAPI PostQueuedCompletionStatus(
 	{
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
+			*lpNumberOfBytes = cqe->res;
 			overlapped_ptr = nullptr;
 			CompletionKey = 0;
 		}
@@ -749,7 +752,7 @@ IOCP_DECL BOOL DisconnectEx(
 	});
 
 	WSASetLastError(ERROR_IO_PENDING);
-	return SOCKET_ERROR;
+	return FALSE;
 }
 
 IOCP_DECL int closesocket(SOCKET s)

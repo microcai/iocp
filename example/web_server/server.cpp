@@ -1,7 +1,7 @@
 ﻿/*
 * In the linker options (on the project right-click, linker, input) you need add wsock32.lib or ws2_32.lib to the list of input files.
 */
-// #define DISABLE_THREADS 1
+#define DISABLE_THREADS 1
 #include <cstdio>
 #include <iostream>
 #include <string>
@@ -54,10 +54,13 @@ public:
 	string filePath;
 	string body;
 
-	request(char* buffer, size_t size) {
-		if (size == 0) return;
-		messageLength = size;
-		destructStr(buffer);
+	request(char* buffer, size_t messageLength)
+		: messageLength(messageLength)
+	{
+		string_view requestStr { buffer , messageLength };
+		int index = 0;
+		index = setRequestType(requestStr, index);
+		index = setFilePath(requestStr, index);
 	}
 private:
 	void setIpandPort(sockaddr_in& setting) {
@@ -65,17 +68,13 @@ private:
 		clientPort = htons(setting.sin_port);
 	}
 	void destructStr(char* buffer) {
-		string requestStr { buffer , messageLength };
-		int index = 0;
-		index = setRequestType(requestStr, index);
-		index = setFilePath(requestStr, index);
-		index = setBody(requestStr, index);
+
 	}
-	int setRequestType(string& str, int start) {
+	int setRequestType(string_view str, int start) {
 		int firstSpaceIndex = str.find(" ", start);
 		if (firstSpaceIndex == -1)
 			throw std::runtime_error{"invalid protocol"};
-		string type = str.substr(0, firstSpaceIndex);
+		string_view type = str.substr(0, firstSpaceIndex);
 		if (type == "GET")
 			requestType = GET;
 		else if (type == "POST")
@@ -84,14 +83,10 @@ private:
 			requestType = UNKNOW;
 		return firstSpaceIndex;
 	}
-	int setFilePath(string& str, int start) {
+	int setFilePath(string_view& str, int start) {
 		int nextSpaceIndex = str.find(" ", start + 1);
 		filePath = str.substr(start + 1, nextSpaceIndex - start - 1);
 		return nextSpaceIndex;
-	}
-	int setBody(string& str, int start) {
-		//skip
-		return 1;
 	}
 };
 
@@ -112,9 +107,12 @@ struct auto_sockethandle
 
 struct response
 {
+	HANDLE iocp;
 	vector<string> GetRouters;
 	vector<string> PostRouters;
-	response() {
+	response(HANDLE iocp)
+		: iocp(iocp)
+	{
 		// add routers
 		GetRouters.push_back("/getFile/");
 	}
@@ -150,7 +148,7 @@ struct response
 
 		auto_handle auto_close(file);
 
-		CreateIoCompletionPort(file, co_await ucoro::local_storage_t<HANDLE>{}, 0, 0);
+		CreateIoCompletionPort(file, iocp, 0, 0);
 
 		WSABUF wsabuf { .len = static_cast<DWORD>(header.length()) , .buf = header.data() };
 
@@ -159,7 +157,7 @@ struct response
 		sendResult = WSASend(socket, &wsabuf, 1, 0, 0, &ov, NULL);
 
 		if (sendResult == SOCKET_ERROR && GetLastError() != ERROR_IO_PENDING) {
-			printf("Error sending header, reconnecting...\n");
+			// printf("Error sending header, reconnecting...\n");
 			co_return -1;
 		}
 
@@ -173,77 +171,61 @@ struct response
 		char * pri_buf = buffer[0];
 		char * back_buf = buffer[1];
 
-		DWORD readLength = 0, back_readLength = BUFFER_N, sent = 0;
+		DWORD readLength = 0, back_readLength = 0, sent = 0;
 		file_ov.add_offset(readLength);
 		auto ret = ReadFile(file, pri_buf, BUFFER_N, &readLength , &file_ov);
-		if (ret == FALSE && GetLastError() == ERROR_IO_PENDING)
+		file_ov.last_error = GetLastError();
+		if (ret == FALSE && file_ov.last_error == ERROR_IO_PENDING)
 			readLength = co_await get_overlapped_result(file_ov);
 
-		bool wait_last_send_op = false;
-
-		do
+		while (readLength > 0)
 		{
 			file_ov.add_offset(readLength);
 			ret = ReadFile(file, back_buf, BUFFER_N, &back_readLength , &file_ov);
-			BOOL need_wait_readfile = (ret == FALSE && GetLastError() == ERROR_IO_PENDING);
+			file_ov.last_error = GetLastError();
 
-			if (readLength > 0)[[likely]]
+			bool need_wait_readfile = (ret == FALSE && file_ov.last_error == ERROR_IO_PENDING);
+
+			WSABUF wsabuf{ .len = readLength , .buf = pri_buf };
+
+			auto result = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
+			ov.last_error = WSAGetLastError();
+			if (result == SOCKET_ERROR && ov.last_error == WSA_IO_PENDING) [[likely]]
 			{
-				if (wait_last_send_op)[[likely]]
-				{
-					sent = co_await get_overlapped_result(ov);
-					if (sent == 0)
-					{
-						printf("partical body send, quiting...\n");
+				co_await get_overlapped_result(ov);
+			}
 
-						if (need_wait_readfile)
-						{
-							CancelIoEx(file, &file_ov);
-							back_readLength = co_await get_overlapped_result(file_ov);
-						}
-
-						co_return -1;
-					}
-				}
-
-				wsabuf = WSABUF{ .len = readLength , .buf = pri_buf };
-
-				auto result = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
-				auto last_error = WSAGetLastError();
-			    if (result != 0 && last_error != WSA_IO_PENDING) [[unlikely]]
-				{
-					wait_last_send_op = false;
-					if (result == SOCKET_ERROR)
-					{
-						printf("Error sending body, reconnecting...\n");
-						if (need_wait_readfile)
-						{
-							CancelIoEx(file, &file_ov);
-							back_readLength = co_await get_overlapped_result(file_ov);
-						}
-						co_return -1;
-					}
-				}
-				else [[likely]]
-				{
-					wait_last_send_op = true;
-				}
-
+			if (ov.last_error)
+			{
+				#ifdef _DEBUG
+				printf("Error sending body, cancel FILE read...\n");
+				#endif
 				if (need_wait_readfile)
 				{
+					// CancelIoEx(file, &file_ov);
 					back_readLength = co_await get_overlapped_result(file_ov);
 				}
-				readLength = back_readLength;
-				std::swap(pri_buf, back_buf);
+				#ifdef _DEBUG
+				printf("Error sending body, canceled FILE read...\n");
+				#endif
+				co_return -1;
 			}
-		} while(readLength > 0);
 
-		if (wait_last_send_op) [[likely]]
-			co_await get_overlapped_result(ov);
+			if (need_wait_readfile)
+			{
+				back_readLength = co_await get_overlapped_result(file_ov);
+			}
+			readLength = back_readLength;
+			std::swap(pri_buf, back_buf);
+
+		};
+
 		auto disconnect_result = DisconnectEx(socket, &ov, 0, 0);
-		if (disconnect_result == FALSE && GetLastError() == ERROR_IO_PENDING)
+		if (disconnect_result == FALSE && WSAGetLastError() == ERROR_IO_PENDING)
 			co_await get_overlapped_result(ov);
-		// printf("file sent successfull...\n");
+		#ifdef _DEBUG
+		printf("file sent successfull...\n");
+		#endif
 		co_return 1;
 	}
 
@@ -253,7 +235,9 @@ struct response
 		awaitable_overlapped ov;
 
 		auto result = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
-		co_await get_overlapped_result_with_checking(ov, result, 0);
+		ov.last_error = WSAGetLastError();
+		if (result == SOCKET_ERROR && ov.last_error == WSA_IO_PENDING)
+			co_await get_overlapped_result(ov);
 		co_return 1;
 	}
 	string getCurFilePath() {
@@ -323,7 +307,7 @@ public:
 		run_event_loop(eventQueue);
 	}
 
-	ucoro::awaitable<void> start_accept(SOCKET listen_sock, int family, HANDLE binded_event_queue)
+	ucoro::awaitable<int> start_accept(SOCKET listen_sock, int family, HANDLE binded_event_queue)
 	{
 		for (;;)
 		{
@@ -332,9 +316,11 @@ public:
 			SOCKET socket = WSASocket(family, SOCK_STREAM , IPPROTO_TCP, 0 , 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_FAKE_CREATION);
 			awaitable_overlapped ov;
 			char outputbuffer[128];
-			DWORD out_size = 0, accepted_size = 0;
-			auto result = AcceptEx(listen_sock, socket, outputbuffer, 0,sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &out_size, &ov);
-			accepted_size = co_await get_overlapped_result_with_checking(ov, !result, out_size);
+			DWORD accepted_size = 0;
+			auto result = AcceptEx(listen_sock, socket, outputbuffer, 0,sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &accepted_size, &ov);
+			ov.last_error = WSAGetLastError();
+			if (result == FALSE && ov.last_error == WSA_IO_PENDING)
+				accepted_size = co_await get_overlapped_result(ov);
 
 			if (ov.last_error == WSAECANCELLED || ov.last_error == ERROR_OPERATION_ABORTED || ov.last_error == ERROR_NETNAME_DELETED)
 			{
@@ -343,47 +329,55 @@ public:
 			}
 			else if (ov.last_error == 0)
 			{
-				CreateIoCompletionPort((HANDLE)socket, binded_event_queue, 0, 0);
+				#ifdef _WIN32
 				sockaddr* localaddr, *remoteaddr;
 				socklen_t localaddr_len, remoteaddr_len;
 				GetAcceptExSockaddrs(outputbuffer, accepted_size, sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &localaddr, &localaddr_len, &remoteaddr, &remoteaddr_len);
-				#ifdef _WIN32
 				auto err = setsockopt(socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char *)&listen_sock, sizeof(listen_sock) );
 				#endif
 
 				handle_connection(socket, binded_event_queue).detach(binded_event_queue);
 			}
+			else
+			{
+				printf("over error\n");
+			}
 		}
+		co_return 1;
 	}
 
 	ucoro::awaitable<void> handle_connection(SOCKET socket, HANDLE iocp)
 	{
-		WSABUF wsaBuf;
-		char buffer[BUFFER_N];
-		wsaBuf.buf = buffer;
-		wsaBuf.len = sizeof(buffer);
-
-		DWORD flags = 0;
-
-		// co_await run_on_iocp_thread(iocp);
+#ifndef DISABLE_THREADS
+		co_await run_on_iocp_thread(iocp);
+#endif
+		CreateIoCompletionPort((HANDLE)socket, iocp, 0, 0);
 
 		auto_sockethandle auto_close(socket);
 
+		char buffer[BUFFER_N + 1];
+		buffer[BUFFER_N] = 0;
+
+		WSABUF wsaBuf { .len = BUFFER_N, .buf = buffer };
+
+		DWORD flags = 0;
 		awaitable_overlapped ov;
-		DWORD recv_bytes;
+		DWORD recv_bytes = BUFFER_N;
  		auto result = WSARecv(socket, &wsaBuf,1, &recv_bytes, &flags, &ov, NULL);
-		recv_bytes = co_await get_overlapped_result_with_checking(ov, result, recv_bytes);
+		ov.last_error = WSAGetLastError();
+		if (result == SOCKET_ERROR && ov.last_error == WSA_IO_PENDING)
+			recv_bytes = co_await get_overlapped_result(ov);
 
-		if (recv_bytes < 10)
-			co_return;
+		if (ov.last_error == 0 && recv_bytes > 10)
+		{
+			request req = request(buffer, recv_bytes);
+			if (req.requestType < 0) {
+				co_return;
+			}
 
-		request req = request(buffer, recv_bytes);
-		if (req.requestType < 0) {
-			co_return;
+			// cout << req.typeName[req.requestType] << " : " << req.filePath << endl;
+			co_await responseClient(req, socket, iocp);
 		}
-
-		// cout << req.typeName[req.requestType] << " : " << req.filePath << endl;
-		co_await responseClient(req, socket);
 	}
 
 
@@ -458,8 +452,8 @@ private:
 		exit(FAIL_CODE);
 	}
 
-	ucoro::awaitable<void> responseClient(request req, SOCKET& messageSocket) {
-		response response;
+	ucoro::awaitable<void> responseClient(request req, SOCKET& messageSocket, HANDLE iocp) {
+		response response{iocp};
 		if (req.requestType == req.GET)
 			co_return co_await response.runGetRoute(messageSocket, req.filePath);
 		else if (req.requestType == req.POST)
