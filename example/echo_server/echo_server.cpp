@@ -21,7 +21,7 @@
 enum // configuration
 {
    MAX_BUF = 1024,
-   SERVER_ADDRESS = INADDR_LOOPBACK,
+   SERVER_ADDRESS = INADDR_ANY,
    SERVICE_PORT = 50001
 };
 
@@ -39,6 +39,7 @@ typedef struct _SocketState // socket state & control
    SOCKET socket;
    DWORD length;
    char buf[MAX_BUF];
+   char buf2[MAX_BUF];
 } SocketState;
 
 struct myOVERLAPPED : OVERLAPPED
@@ -146,7 +147,8 @@ static void bind_listening_socket(void)
    struct sockaddr_in sin;
 
    prepare_endpoint(&sin, SERVER_ADDRESS, SERVICE_PORT);
-   
+   int v = 1;
+   setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, (char*)&v, sizeof v);
    if (::bind(listener, (sockaddr*) &sin, sizeof(sin)) == SOCKET_ERROR)
    {
       printf("* error in bind!\n");
@@ -415,13 +417,18 @@ static void start_reading(SocketState* socketState, myOVERLAPPED* ovl)
 
 static void start_writing(SocketState* socketState, myOVERLAPPED* ovl)
 {
-   WSABUF wsabuf = { socketState->length, socketState->buf };
+   auto content_length_line_len = snprintf(socketState->buf2, 80, "Content-Length: %d\r\n\r\n", socketState->length);
+   WSABUF wsabuf[3] = {
+      { .len = 17, .buf = (char*) "HTTP/1.1 200 OK\r\n" },
+      { .len = (size_t) content_length_line_len, .buf = socketState->buf2 },
+      { socketState->length, socketState->buf }
+   };
 
    memset(ovl, 0, sizeof(OVERLAPPED));
    ovl->on_complete = write_completed;
    socketState->operation = OP_WRITE;
 
-   if (WSASend(socketState->socket, &wsabuf, 1, NULL, 0, ovl, NULL)
+   if (WSASend(socketState->socket, wsabuf, 3, NULL, 0, ovl, NULL)
       == SOCKET_ERROR)
    {
       int err = WSAGetLastError();
