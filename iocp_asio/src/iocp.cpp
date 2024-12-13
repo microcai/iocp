@@ -182,6 +182,21 @@ IOCP_DECL SOCKET WSASocket(_In_ int af, _In_ int type, _In_ int protocol, _In_ L
 	return new SOCKET_emu_class{af, type};
 }
 
+IOCP_DECL SOCKET WSAAccept(
+  _In_        SOCKET          s,
+  _Out_       sockaddr        *addr,
+  _Inout_     LPINT           addrlen,
+  _In_        LPCONDITIONPROC lpfnCondition,
+  _In_        DWORD_PTR       dwCallbackData)
+{
+	int new_sock = accept4(s->native_handle(), addr, (socklen_t*) addrlen, SOCK_NONBLOCK|SOCK_CLOEXEC);
+	if (new_sock < 0)
+		return INVALID_SOCKET;
+	return new SOCKET_emu_class{ SOCKET_emu_class::tcp_sock{SOCKET_emu_class::internal_fake_io_context,
+		addr->sa_family == AF_INET6 ? asio::ip::tcp::v6() : asio::ip::tcp::v4(),
+	 	new_sock} };
+}
+
 IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _In_ PVOID lpOutputBuffer,
 						_In_ DWORD dwReceiveDataLength, _In_ DWORD dwLocalAddressLength,
 						_In_ DWORD dwRemoteAddressLength, _Out_ LPDWORD lpdwBytesReceived,

@@ -5,9 +5,11 @@
 #include <deque>
 #include <map>
 
+#include "iocp.h"
+#undef socket
+
 #include "asio.hpp"
 
-#include "iocp.h"
 #include "operation_allocator.hpp"
 
 struct base_handle
@@ -97,10 +99,22 @@ struct SOCKET_emu_class final : public base_handle
 		, type(0)
 		, sock_(std::in_place_type_t<normal_file>{}, fd)
 	{
+		af_family = AF_INET6;
+		type = SOCK_STREAM;
 		// 一个空 socket, 但是其实真正创建的地方，是在
 		// ConnectEx/AcceptEx 两个地方。
 	}
 
+	SOCKET_emu_class(tcp_sock&& moved_sock, iocp_handle_emu_class* iocp = nullptr)
+	 	:  _iocp(iocp)
+		, _completion_key(0)
+		, af_family(AF_UNSPEC)
+		, type(0)
+		, sock_(std::in_place_type_t<tcp_sock>{}, std::move(moved_sock))
+	{
+		// 一个空 socket, 但是其实真正创建的地方，是在
+		// ConnectEx/AcceptEx 两个地方。
+	}
 
 	void construct_tcp_socket()
 	{

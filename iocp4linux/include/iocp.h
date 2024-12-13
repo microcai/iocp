@@ -49,7 +49,7 @@ typedef const char* LPCSTR;
 typedef const wchar_t* LPCWSTR;
 
 typedef int* LPINT;
-typedef unsigned long ULONG_PTR, *PULONG_PTR;
+typedef unsigned long ULONG_PTR, *PULONG_PTR, ULONG;
 typedef uint16_t WORD, *LPWORD;
 typedef uint32_t DWORD, *LPDWORD, *DWORD_PTR;
 typedef bool BOOL; // bool is from stdbool if C99 mode.
@@ -59,6 +59,7 @@ typedef uint16_t TCHAR;
 typedef struct sockaddr SOCKADDR, * LPSOCKADDR;
 typedef struct sockaddr_in SOCKADDR_IN;
 typedef struct sockaddr_in6 SOCKADDR_IN6;
+typedef unsigned int GROUP;
 
 struct base_handle;
 typedef base_handle * HANDLE, * SOCKET, * WSAEVENT;
@@ -135,6 +136,65 @@ typedef struct WSAData
 	char* lpVendorInfo;
 } WSADATA, *LPWSADATA;
 
+
+typedef struct __WSABUF
+{
+	size_t len;
+	char* buf;
+} WSABUF, *LPWSABUF;
+
+enum SERVICETYPE {
+  SERVICETYPE_NOTRAFFIC,
+  SERVICETYPE_BESTEFFORT,
+  SERVICETYPE_CONTROLLEDLOAD,
+  SERVICETYPE_GUARANTEED,
+  SERVICETYPE_QUALITATIVE,
+  SERVICETYPE_NETWORK_UNAVAILBLE,
+  SERVICETYPE_NETWORK_CONTROL,
+  SERVICETYPE_GENERAL_INFORMATION,
+  SERVICETYPE_NOCHANGE,
+  SERVICETYPE_NONCONFORMING,
+  SERVICE_NO_TRAFFIC_CONTROL,
+  SERVICE_NO_QOS_SIGNALING,
+
+};
+
+typedef struct _flowspec {
+  ULONG       TokenRate;
+  ULONG       TokenBucketSize;
+  ULONG       PeakBandwidth;
+  ULONG       Latency;
+  ULONG       DelayVariation;
+  SERVICETYPE ServiceType;
+  ULONG       MaxSduSize;
+  ULONG       MinimumPolicedSize;
+} FLOWSPEC, *PFLOWSPEC, *LPFLOWSPEC;
+
+typedef struct _QualityOfService {
+  FLOWSPEC SendingFlowspec;
+  FLOWSPEC ReceivingFlowspec;
+  WSABUF   ProviderSpecific;
+} QOS, *LPQOS;
+
+typedef void (*LPOVERLAPPED_COMPLETION_ROUTINE)(
+  _In_  DWORD dwErrorCode,
+  _In_  DWORD dwNumberOfBytesTransfered,
+  _Inout_  LPOVERLAPPED lpOverlapped
+);
+
+typedef int (*LPCONDITIONPROC)(
+  _In_     LPWSABUF    lpCallerId,
+  _In_     LPWSABUF    lpCallerData,
+  _Inout_  LPQOS       lpSQOS,
+  _Inout_  LPQOS       lpGQOS,
+  _In_     LPWSABUF    lpCalleeId,
+  _In_     LPWSABUF    lpCalleeData,
+  _Out_    GROUP * g,
+  _In_     DWORD_PTR   dwCallbackData
+);
+
+typedef LPOVERLAPPED_COMPLETION_ROUTINE LPWSAOVERLAPPED_COMPLETION_ROUTINE;
+
 IOCP_DECL int WSAStartup(_In_ WORD wVersionRequested, _Out_ LPWSADATA lpWSAData);
 
 IOCP_DECL int WSACleanup();
@@ -158,6 +218,14 @@ IOCP_DECL SOCKET WSASocket(_In_ int af, _In_ int type, _In_ int protocol, _In_ L
 #define WSASocketW WSASocket
 
 #define socket(af, ty, protocal) WSASocket(af, ty, protocal, 0, 0, FILE_FLAG_OVERLAPPED)
+
+IOCP_DECL SOCKET WSAAccept(
+  _In_        SOCKET          s,
+  _Out_       sockaddr        *addr,
+  _Inout_     LPINT           addrlen,
+  _In_        LPCONDITIONPROC lpfnCondition,
+  _In_        DWORD_PTR       dwCallbackData
+);
 
 IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _In_ PVOID lpOutputBuffer,
 						_In_ DWORD dwReceiveDataLength, _In_ DWORD dwLocalAddressLength,
@@ -184,20 +252,6 @@ IOCP_DECL void GetAcceptExSockaddrs(
   _Out_ sockaddr** RemoteSockaddr,
   _Out_ socklen_t* RemoteSockaddrLength
 );
-
-typedef struct __WSABUF
-{
-	size_t len;
-	char* buf;
-} WSABUF, *LPWSABUF;
-
-typedef void (*LPOVERLAPPED_COMPLETION_ROUTINE)(
-  _In_  DWORD dwErrorCode,
-  _In_  DWORD dwNumberOfBytesTransfered,
-  _Inout_  LPOVERLAPPED lpOverlapped
-);
-
-typedef LPOVERLAPPED_COMPLETION_ROUTINE LPWSAOVERLAPPED_COMPLETION_ROUTINE;
 
 IOCP_DECL int WSASend(_In_ SOCKET s, _In_ LPWSABUF lpBuffers, _In_ DWORD dwBufferCount,
 					  _Out_ LPDWORD lpNumberOfBytesSent, _In_ DWORD dwFlags, _In_ LPWSAOVERLAPPED lpOverlapped,
