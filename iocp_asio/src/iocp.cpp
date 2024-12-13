@@ -13,6 +13,8 @@
 
 #include "iocp.h"
 
+#undef socket
+
 #include <liburing.h>
 
 #include "internal_iocp_struct.hpp"

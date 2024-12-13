@@ -157,6 +157,8 @@ IOCP_DECL SOCKET WSASocket(_In_ int af, _In_ int type, _In_ int protocol, _In_ L
 #define WSASocketA WSASocket
 #define WSASocketW WSASocket
 
+#define socket(af, ty, protocal) WSASocket(af, ty, protocal, 0, 0, FILE_FLAG_OVERLAPPED)
+
 IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _In_ PVOID lpOutputBuffer,
 						_In_ DWORD dwReceiveDataLength, _In_ DWORD dwLocalAddressLength,
 						_In_ DWORD dwRemoteAddressLength, _Out_ LPDWORD lpdwBytesReceived,

@@ -12,6 +12,7 @@
 #include <sys/socket.h>
 
 #include "iocp.h"
+#undef socket
 
 #include <liburing.h>
 

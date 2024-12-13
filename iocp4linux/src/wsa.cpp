@@ -8,6 +8,7 @@
 #include "internal_iocp_struct.hpp"
 
 #include "iocp.h"
+#undef socket
 
 struct wsa_event_emu_class : public base_handle
 {
