@@ -328,14 +328,17 @@ inline void exit_event_loop_when_empty(HANDLE iocp_handle)
 // 执行这个，可以保证 协程被 IOCP 线程调度. 特别是 一个线程一个 IOCP 的模式下特有用
 inline ucoro::awaitable<void> run_on_iocp_thread(HANDLE iocp_handle)
 {
-    struct SwitchIOCPAwaitable : public OVERLAPPED
+    awaitable_overlapped ov;
+    struct SwitchIOCPAwaitable
     {
         HANDLE iocp_handle;
 
-        std::unique_ptr<awaitable_overlapped> coro;
+        awaitable_overlapped& ov;
 
-        SwitchIOCPAwaitable(HANDLE iocp_handle) : iocp_handle(iocp_handle) {
-            coro.reset(new awaitable_overlapped{});
+        SwitchIOCPAwaitable(HANDLE iocp_handle, awaitable_overlapped& ov)
+            : iocp_handle(iocp_handle)
+            , ov(ov)
+        {
         }
 
         constexpr bool await_ready() noexcept
@@ -345,9 +348,9 @@ inline ucoro::awaitable<void> run_on_iocp_thread(HANDLE iocp_handle)
 
         void await_suspend(std::coroutine_handle<> handle)
         {
-            coro->coro_handle = handle;
-            coro->coro_handle_set.test_and_set();
-            PostQueuedCompletionStatus(iocp_handle, 0, 0, &(coro.get()->ovl));
+            ov.coro_handle = handle;
+            ov.coro_handle_set.test_and_set();
+            PostQueuedCompletionStatus(iocp_handle, 0, 0, &ov);
         }
 
         void await_resume()
@@ -356,5 +359,5 @@ inline ucoro::awaitable<void> run_on_iocp_thread(HANDLE iocp_handle)
         }
     };
 
-    co_await SwitchIOCPAwaitable{iocp_handle};
+    co_await SwitchIOCPAwaitable{iocp_handle, ov};
 }
