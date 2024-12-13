@@ -41,6 +41,11 @@ typedef struct _SocketState // socket state & control
    char buf[MAX_BUF];
 } SocketState;
 
+struct myOVERLAPPED : OVERLAPPED
+{
+   void (*on_complete)(BOOL resultOk, DWORD byte_transfreed, ULONG_PTR completekey, OVERLAPPED*);
+};
+
 // -----------------------------------------------------------------------------
 
 // the completion port
@@ -49,20 +54,20 @@ static HANDLE cpl_port;
 // the listening socket
 static SOCKET listener;
 static SocketState listener_state;
-static OVERLAPPED listener_ovl;
+static myOVERLAPPED listener_ovl;
 
 // -----------------------------------------------------------------------------
 
 // prototypes - main functions
 
 static void start_accepting(void);
-static void accept_completed(BOOL, DWORD, SocketState*, OVERLAPPED*);
+static void accept_completed(BOOL, DWORD, ULONG_PTR, OVERLAPPED*);
 
-static void start_reading(SocketState*, OVERLAPPED*);
-static void read_completed(BOOL, DWORD, SocketState*, OVERLAPPED*);
+static void start_reading(SocketState*, myOVERLAPPED*);
+static void read_completed(BOOL, DWORD, ULONG_PTR, OVERLAPPED*);
 
-static void start_writing(SocketState*, OVERLAPPED*);
-static void write_completed(BOOL, DWORD,SocketState*, OVERLAPPED*);
+static void start_writing(SocketState*, myOVERLAPPED*);
+static void write_completed(BOOL, DWORD, ULONG_PTR, OVERLAPPED*);
 
 static void init(void);
 static void run(void);
@@ -77,7 +82,7 @@ static void destroy_connection(SocketState*, OVERLAPPED*);
 static BOOL get_completion_status(DWORD*, SocketState**,OVERLAPPED**);
 static void init_winsock(void);
 static SocketState* new_socket_state(void);
-static OVERLAPPED* new_overlapped(void);
+static myOVERLAPPED* new_overlapped(void);
 static void prepare_endpoint(struct sockaddr_in*, u_long, u_short);
 static void start_listening(void);
 
@@ -91,9 +96,9 @@ int main(void)
 }
 // -----------------------------------------------------------------------------
 
-static void accept_completed(BOOL resultOk, DWORD length,
-   SocketState* socketState, OVERLAPPED* ovl)
+static void accept_completed(BOOL resultOk, DWORD length, ULONG_PTR key, OVERLAPPED* ovl)
 {
+   SocketState* socketState = reinterpret_cast<SocketState*>(key);
    SocketState* newSocketState;
 
    if (resultOk)
@@ -116,7 +121,9 @@ static void accept_completed(BOOL resultOk, DWORD length,
       }
 
       // starts receiving from the new connection
-      start_reading(newSocketState, new_overlapped());
+      auto new_ovl = new_overlapped();
+      new_ovl->on_complete = read_completed;
+      start_reading(newSocketState, new_ovl);
 
       // starts waiting for another connection request
       start_accepting();
@@ -151,7 +158,7 @@ static void bind_listening_socket(void)
 
 static SOCKET create_accepting_socket(void)
 {
-   SOCKET acceptor = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, 0);
+   SOCKET acceptor = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, WSA_FLAG_OVERLAPPED);
    if (acceptor == INVALID_SOCKET)
    {
       printf("* error creating accept socket!\n");
@@ -177,7 +184,7 @@ static void create_io_completion_port(void)
 
 static void create_listening_socket(void)
 {
-   listener = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0 , 0, 0);
+   listener = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0 , 0, WSA_FLAG_OVERLAPPED);
    if (listener == INVALID_SOCKET)
    {
       printf("* error creating listening socket!\n");
@@ -208,7 +215,7 @@ static void destroy_connection(SocketState* socketState, OVERLAPPED* ovl)
 
 // -----------------------------------------------------------------------------
 
-static BOOL get_completion_status(DWORD* length, SocketState** socketState,
+static BOOL get_completion_status(DWORD* length, PULONG_PTR socketState,
    OVERLAPPED** ovl_res)
 {
    BOOL resultOk;
@@ -267,9 +274,9 @@ static SocketState* new_socket_state(void)
 
 // -----------------------------------------------------------------------------
 
-static OVERLAPPED* new_overlapped(void)
+static myOVERLAPPED* new_overlapped(void)
 {
-   return (OVERLAPPED*)calloc(1, sizeof(OVERLAPPED));
+   return (myOVERLAPPED*)calloc(1, sizeof(myOVERLAPPED));
 }
 
 // -----------------------------------------------------------------------------
@@ -284,9 +291,10 @@ static void prepare_endpoint(struct sockaddr_in* sin, u_long address,
 
 // -----------------------------------------------------------------------------
 
-static void read_completed(BOOL resultOk, DWORD length,
-   SocketState* socketState, OVERLAPPED* ovl)
+static void read_completed(BOOL resultOk, DWORD length, ULONG_PTR key, OVERLAPPED* ovl)
 {
+   SocketState* socketState = reinterpret_cast<SocketState*>(key);
+
    if (resultOk)
    {
       if (length > 0)
@@ -295,7 +303,7 @@ static void read_completed(BOOL resultOk, DWORD length,
 
          // starts another write
          socketState->length = length;
-         start_writing(socketState, ovl);
+         start_writing(socketState, (myOVERLAPPED*)ovl);
       }
       else // length == 0
       {
@@ -318,34 +326,25 @@ static void run(void)
    DWORD length;
    BOOL resultOk;
    OVERLAPPED* ovl_res;
-   SocketState* socketState;
+   ULONG_PTR complete_key;
+
+   static const char * OP_STR[] = {
+      "OP_NONE",
+      "OP_ACCEPT",
+      "OP_READ",
+      "OP_WRITE"
+   };
 
    for (;;)
    {
-      resultOk = get_completion_status(&length, &socketState, &ovl_res);
+      resultOk = get_completion_status(&length, &complete_key, &ovl_res);
 
-      switch (socketState->operation)
+      if (ovl_res)
       {
-         case OP_ACCEPT:
-            printf("* operation ACCEPT completed\n");
-            accept_completed(resultOk, length, socketState, ovl_res);
-            break;
-
-         case OP_READ:
-            printf("* operation READ completed\n");
-            read_completed(resultOk, length, socketState, ovl_res);
-            break;
-
-         case OP_WRITE:
-            printf("* operation WRITE completed\n");
-            write_completed(resultOk, length, socketState, ovl_res);
-            break;
-
-         default:
-            printf("* error, unknown operation!!!\n");
-            destroy_connection(socketState, ovl_res); // hope for the best!
-            break;
-      } // switch
+         SocketState*s = reinterpret_cast<SocketState*>(complete_key);
+         printf("* operation %s@%p completed\n", OP_STR[s->operation], ovl_res);
+         reinterpret_cast<myOVERLAPPED*>(ovl_res)->on_complete(resultOk, length, complete_key, ovl_res);
+      }
    } // for
 }
 
@@ -361,6 +360,8 @@ static void start_accepting(void)
    // uses listener's completion key and overlapped structure
    listener_state.socket = acceptor;
    memset(&listener_ovl, 0, sizeof(OVERLAPPED));
+
+   listener_ovl.on_complete = accept_completed;
 
    // starts asynchronous accept
    if (!AcceptEx(listener, acceptor, listener_state.buf, 0 /* no recv */,
@@ -389,12 +390,14 @@ static void start_listening(void)
 
 // -----------------------------------------------------------------------------
 
-static void start_reading(SocketState* socketState, OVERLAPPED* ovl)
+static void start_reading(SocketState* socketState, myOVERLAPPED* ovl)
 {
    DWORD flags = 0;
    WSABUF wsabuf = { MAX_BUF, socketState->buf };
 
    memset(ovl, 0, sizeof(OVERLAPPED));
+   ovl->on_complete= read_completed;
+
    socketState->operation = OP_READ;
    if (WSARecv(socketState->socket, &wsabuf, 1, NULL, &flags, ovl, NULL)
       == SOCKET_ERROR)
@@ -410,11 +413,12 @@ static void start_reading(SocketState* socketState, OVERLAPPED* ovl)
 
 // -----------------------------------------------------------------------------
 
-static void start_writing(SocketState* socketState, OVERLAPPED* ovl)
+static void start_writing(SocketState* socketState, myOVERLAPPED* ovl)
 {
    WSABUF wsabuf = { socketState->length, socketState->buf };
 
    memset(ovl, 0, sizeof(OVERLAPPED));
+   ovl->on_complete = write_completed;
    socketState->operation = OP_WRITE;
 
    if (WSASend(socketState->socket, &wsabuf, 1, NULL, 0, ovl, NULL)
@@ -431,15 +435,15 @@ static void start_writing(SocketState* socketState, OVERLAPPED* ovl)
 
 // -----------------------------------------------------------------------------
 
-static void write_completed(BOOL resultOk, DWORD length,
-   SocketState* socketState, OVERLAPPED* ovl)
+static void write_completed(BOOL resultOk, DWORD length, ULONG_PTR key, OVERLAPPED* ovl)
 {
+   SocketState* socketState = reinterpret_cast<SocketState*>(key);
    if (resultOk)
    {
       if (length > 0)
       {
          printf("* write operation completed\n");
-         start_reading(socketState, ovl); // starts another read
+         start_reading(socketState, (myOVERLAPPED*)ovl); // starts another read
       }
       else // length == 0 (strange!)
       {
