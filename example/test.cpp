@@ -1,7 +1,5 @@
 ﻿
 
-// #define __SINGAL_THREADED 1
-
 #include "universal_async.hpp"
 
 #ifdef _WIN32
@@ -80,19 +78,8 @@ ucoro::awaitable<void> accept_coro(SOCKET slisten, HANDLE iocp, int af_family)
 			if (ov.last_error)
 				continue;
 
-			// printf("New con: %p\n", client_socket);
 			HANDLE read_port = CreateIoCompletionPort((HANDLE)(client_socket), iocp, 0, 0);
-
-			// LPSOCKADDR local_addr = 0;
-			// socklen_t local_addr_length = 0;
-			// LPSOCKADDR remote_addr = 0;
-			// socklen_t remote_addr_length = 0;
-			// DWORD address_length = sizeof(sockaddr_in6) + 16 ;
-
-			// GetAcceptExSockaddrs(addr_buff, 0, address_length, address_length, &local_addr,
-			// 						&local_addr_length, &remote_addr, &remote_addr_length);
-
-
+			// 开新协程处理连接.
 			echo_sever_client_session(client_socket).detach();
 		}
 	}
@@ -123,6 +110,8 @@ int main()
 		printf("Socket creation failed: %d\n", WSAGetLastError());
 	}
 
+	CreateIoCompletionPort((HANDLE)(listener6), iocp_handle, 0, 0);
+
 #ifdef _WIN32
 		GUID disconnectex = WSAID_DISCONNECTEX;
 		DWORD BytesReturned;
@@ -131,12 +120,6 @@ int main()
 			&disconnectex, sizeof(GUID), &DisconnectEx, sizeof(DisconnectEx),
 			&BytesReturned, 0, 0);
 #endif
-	// listener = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
-	// if (listener == INVALID_SOCKET)
-	// {
-	// 	printf("Socket creation failed: %d\n", WSAGetLastError());
-	// }
-	// CreateIoCompletionPort((HANDLE)(listener), iocp_handle, 0, 1);
 	{
 		// Addr of listening socket
 		sockaddr_in6 addr = {AF_INET6, htons(PORT) };
@@ -152,21 +135,6 @@ int main()
 			puts("Socket binding failed");
 		}
 	}
-	// {
-	// 	// Addr of listening socket
-	// 	SOCKADDR_IN addr = {0};
-	// 	// Setup address and port of
-	// 	// listening socket
-	// 	addr.sin_family = AF_INET;
-	// 	addr.sin_port = htons(PORT);
-	// 	int v = 1;
-	// 	setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, (char*) &v, sizeof (v));
-	// 	// Bind listener to address and port
-	// 	if (bind(listener, (sockaddr*) &addr, sizeof(addr)) == SOCKET_ERROR)
-	// 	{
-	// 		puts("Socket binding failed");
-	// 	}
-	// }
 
 	// Start listening
 	if (listen(listener6, SOMAXCONN) == SOCKET_ERROR)
@@ -174,20 +142,13 @@ int main()
 		printf("bind fained\n");
 		return 1;
 	}
-	// listen(listener, 1024);
-
-	// Completion port for newly accepted sockets
-	// Link it to the main completion port
-
 
 	printf("Listening on %d\n", PORT);
-	CreateIoCompletionPort((HANDLE)(listener6), iocp_handle, 0, 0);
 
 	// 开 4个 acceptor
 	for (int i = 0; i < 80; i++)
 	{
 		accept_coro(listener6, iocp_handle, AF_INET6).detach();
-	// 	accept_coro(listener, iocp_handle, AF_INET).detach();
 	}
 
 	// 进入 event loop
