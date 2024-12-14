@@ -62,7 +62,7 @@ typedef struct sockaddr_in6 SOCKADDR_IN6;
 typedef unsigned int GROUP;
 
 struct base_handle;
-typedef base_handle * HANDLE, * SOCKET, * WSAEVENT;
+typedef struct base_handle * HANDLE, * SOCKET, * WSAEVENT;
 
 const HANDLE INVALID_HANDLE_VALUE = (HANDLE)-1;
 const SOCKET INVALID_SOCKET = (SOCKET)-1;
@@ -143,7 +143,7 @@ typedef struct __WSABUF
 	char* buf;
 } WSABUF, *LPWSABUF;
 
-enum SERVICETYPE {
+typedef enum _SERVICETYPE {
   SERVICETYPE_NOTRAFFIC,
   SERVICETYPE_BESTEFFORT,
   SERVICETYPE_CONTROLLEDLOAD,
@@ -157,7 +157,7 @@ enum SERVICETYPE {
   SERVICE_NO_TRAFFIC_CONTROL,
   SERVICE_NO_QOS_SIGNALING,
 
-};
+}SERVICETYPE;
 
 typedef struct _flowspec {
   ULONG       TokenRate;
@@ -221,7 +221,7 @@ IOCP_DECL SOCKET WSASocket(_In_ int af, _In_ int type, _In_ int protocol, _In_ L
 
 IOCP_DECL SOCKET WSAAccept(
   _In_        SOCKET          s,
-  _Out_       sockaddr        *addr,
+  _Out_       struct sockaddr        *addr,
   _Inout_     LPINT           addrlen,
   _In_        LPCONDITIONPROC lpfnCondition,
   _In_        DWORD_PTR       dwCallbackData
@@ -234,7 +234,7 @@ IOCP_DECL BOOL AcceptEx(_In_ SOCKET sListenSocket, _In_ SOCKET sAcceptSocket, _I
 
 IOCP_DECL BOOL WSAConnectEx(
   _In_            SOCKET s,
-  _In_            const sockaddr *name,
+  _In_            const struct sockaddr *name,
   _In_            int namelen,
   _In_opt_        PVOID lpSendBuffer,
   _In_            DWORD dwSendDataLength,
@@ -247,9 +247,9 @@ IOCP_DECL void GetAcceptExSockaddrs(
   _In_  DWORD      dwReceiveDataLength,
   _In_  DWORD      dwLocalAddressLength,
   _In_  DWORD      dwRemoteAddressLength,
-  _Out_ sockaddr** LocalSockaddr,
+  _Out_ struct sockaddr** LocalSockaddr,
   _Out_ socklen_t* LocalSockaddrLength,
-  _Out_ sockaddr** RemoteSockaddr,
+  _Out_ struct sockaddr** RemoteSockaddr,
   _Out_ socklen_t* RemoteSockaddrLength
 );
 
@@ -269,7 +269,7 @@ IOCP_DECL int WSASendTo(
   _In_    DWORD                              dwBufferCount,
   _Out_   LPDWORD                            lpNumberOfBytesSent,
   _In_    DWORD                              dwFlags,
-  _In_    const sockaddr                     *lpTo,
+  _In_    const struct sockaddr                     *lpTo,
   _In_    int                                iTolen,
   _In_    LPWSAOVERLAPPED                    lpOverlapped,
   _In_    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
@@ -281,7 +281,7 @@ IOCP_DECL int WSARecvFrom(
   _In_    DWORD                              dwBufferCount,
   _Out_   LPDWORD                            lpNumberOfBytesRecvd,
   _In_    LPDWORD                            lpFlags,
-  _Out_   sockaddr                           *lpFrom,
+  _Out_   struct sockaddr                   *lpFrom,
   _In_    LPINT                              lpFromlen,
   _In_    LPWSAOVERLAPPED                    lpOverlapped,
   _In_    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
@@ -386,11 +386,15 @@ IOCP_DECL int SOCKET_get_fd(SOCKET);
 
 IOCP_DECL int closesocket(SOCKET);
 
+#ifdef __cplusplus
+
 int bind(SOCKET, SOCKADDR_IN*, int);
 int bind(SOCKET, SOCKADDR*, int);
 
 int listen(SOCKET, int);
 int setsockopt(SOCKET, int __level, int __optname, const void *__optval, socklen_t __optlen);
+
+#endif
 
 #define ZeroMemory(a, b) memset(a, 0, b)
 
@@ -402,10 +406,7 @@ IOCP_DECL DWORD WSASetLastError(DWORD);
 #define GetLastError() WSAGetLastError()
 #define SetLastError(e) WSASetLastError(e)
 
-inline WORD MAKEWORD(uint a, uint b)
-{
-	return (a << 8) + b;
-}
+IOCP_DECL WORD MAKEWORD(uint a, uint b);
 
 #define CONTAINING_RECORD(address,type,field) \
 	((type*)((char*)(address)-(ULONG_PTR)(&((type*)0)->field)))

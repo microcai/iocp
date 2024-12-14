@@ -808,6 +808,12 @@ IOCP_DECL int WSAStartup(_In_ WORD wVersionRequested, _Out_ LPWSADATA lpWSAData)
 	return 0;
 }
 
+IOCP_DECL WORD MAKEWORD(uint a, uint b)
+{
+	return (a << 8) + b;
+}
+
+
 IOCP_DECL int WSACleanup()
 {
 	return 0;

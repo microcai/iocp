@@ -127,11 +127,18 @@ struct SOCKET_emu_class final : public base_handle
 
 	virtual ~SOCKET_emu_class() override
 	{
-		_iocp->submit_io([this](io_uring_sqe* sqe)
+		if (_iocp)
 		{
-			io_uring_prep_close(sqe, _socket_fd);
-			io_uring_sqe_set_data(sqe, nullptr);
-		});
+			_iocp->submit_io([this](io_uring_sqe* sqe)
+			{
+				io_uring_prep_close(sqe, _socket_fd);
+				io_uring_sqe_set_data(sqe, nullptr);
+			});
+		}
+		else
+		{
+			close(_socket_fd);
+		}
 	}
 };
 
