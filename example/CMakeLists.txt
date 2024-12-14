@@ -7,6 +7,8 @@ add_executable(iocp_test test.cpp)
 
 add_executable(echo_server echo_server/echo_server.cpp)
 
+add_executable(echo_server2 echo_server/echo_server.c)
+
 add_executable(web_server web_server/server.cpp)
 
 add_executable(example_on_zhihu zhihu.cpp)
