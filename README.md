@@ -115,7 +115,7 @@ of what wepoll does.
 
 # 关于 µasync
 
-如果你查看了 test 文件夹下的 示例，会发明他们包含了universal_async.hpp 头文件，然后使用协程的方式使用 IOCP, 这又是什么库呢？
+如果你查看了 example 文件夹下的 示例，会发现他们包含了universal_async.hpp 头文件，然后使用协程的方式使用 IOCP, 这又是什么库呢？
 
 
 在编写 iocp4linux 的过程中，我需要写一些测试代码。
@@ -204,6 +204,20 @@ awaitable_overlapped 可以隐式转换为 `WSAOVERLAPPED*` 从而被 AcceptEx �
 这个库太好用了，其实就一个头文件。他就在 iocp4linux 的仓库里。名为 `universal_async.hpp`
 
 只要包含这个头文件即可立即享受。
+
+## µasync 的其他头文件是啥
+
+univerasl_fiber.hpp 是使用 ucontext/windows Fiber/boost.context 进行上下文切换的一个有栈协程库。
+
+具体用法可以参考 [echo_client_stackfull.cpp](example/echo_client/echo_client_stackfull.cpp)
+
+easy_iocp.hpp 是一个演示如何将回调函数塞入 OVERLAPPED* 结构体，并在世界循环中调用回调函数的代码。
+具体用法可参考 [echo_server_callback.cpp](example/echo_server/echo_server_callback.cpp)
+
+univerasl_fiber.h 是使用 ucontext/windows Fiber 进行上下文切换的一个有栈协程库, 支持在 C 语言下使用。
+具体用法可以参考 [echo_server_stackfull.c](example/echo_server/echo_server_stackfull.c)
+
+awaitable.hpp 是来自 µcoro 项目的 c++20 协程库。被 universal_async.hpp 所依赖。
 
 ## 关于 awaitable.hpp
 
