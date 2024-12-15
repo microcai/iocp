@@ -433,14 +433,19 @@ IOCP_DECL BOOL WSAConnectEx(
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
 			if (cqe->res < 0) [[unlikely]]
+			{
 				WSASetLastError(-cqe->res);
+			}
 			else if (lpSendBuffer && dwSendDataLength) [[unlikely]]
 			{
 				auto send_bytes = send(s->native_handle(), lpSendBuffer, dwSendDataLength, MSG_NOSIGNAL|MSG_DONTWAIT);
 				if (lpNumberOfBytes && send_bytes > 0)
 					* lpNumberOfBytes = send_bytes;
 			}
-			WSASetLastError(0);
+			else [[likely]]
+			{
+				WSASetLastError(0);
+			}
 		}
 	};
 

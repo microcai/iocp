@@ -20,6 +20,7 @@
 
 #endif
 
+#include <atomic>
 #include <assert.h>
 #include <tuple>
 
@@ -90,44 +91,69 @@ inline void process_overlapped_event(OVERLAPPED* _ov,
 #endif
 }
 
+inline std::atomic_long out_standing_coroutines;
+
+inline int pending_works()
+{
+    return out_standing_coroutines;
+}
+
 inline void run_event_loop(HANDLE iocp_handle)
 {
+    bool quit_if_no_work = false;
+
 	for (;;)
 	{
 		DWORD NumberOfBytes = 0;
 		ULONG_PTR ipCompletionKey = 0;
 		LPOVERLAPPED ipOverlap = NULL;
 
+        DWORD dwMilliseconds_to_wait = quit_if_no_work ? ( pending_works() ? 500 : 0 ) : INFINITE;
+
 		// get IO status, no wait
 		SetLastError(0);
-		BOOL ok = GetQueuedCompletionStatus(iocp_handle, &NumberOfBytes, (PULONG_PTR)&ipCompletionKey, &ipOverlap, INFINITE);
+		BOOL ok = GetQueuedCompletionStatus(iocp_handle, &NumberOfBytes, (PULONG_PTR)&ipCompletionKey, &ipOverlap, dwMilliseconds_to_wait);
 		DWORD last_error = GetLastError();
 
-		if (ipOverlap)
+		if (ipOverlap)[[likely]]
 		{
 			process_overlapped_event(ipOverlap, ok, NumberOfBytes, ipCompletionKey, last_error);
 		}
+		else if (ipCompletionKey == (ULONG_PTR)iocp_handle) [[unlikely]]
+		{
+            quit_if_no_work = true;
+		}
+
+		if  ( quit_if_no_work) [[unlikely]]
+        {
+            // 检查还在投递中的 IO 操作.
+            if (!pending_works())
+            {
+                break;
+            }
+        }
 	}
 }
 
 #ifdef _WIN32
 
 typedef  struct{
-   LPVOID caller_fiber;
-   void (*func_ptr)(void* param);
-   void* param;
+	LPVOID caller_fiber;
+	void (*func_ptr)(void* param);
+	void* param;
 } FiberParamPack;
 
 static inline void WINAPI FiberEntryPoint(LPVOID param)
 {
-   FiberParamPack saved_param;
-   memcpy(&saved_param, param, sizeof(FiberParamPack));
-   SwitchToFiber(saved_param.caller_fiber);
+	FiberParamPack saved_param;
+	memcpy(&saved_param, param, sizeof(FiberParamPack));
+	SwitchToFiber(saved_param.caller_fiber);
 
-   saved_param.func_ptr(saved_param.param);
+	saved_param.func_ptr(saved_param.param);
 
-   __please_delete_me = GetCurrentFiber();
-   SwitchToFiber(__current_yield_fiber);
+	-- out_standing_coroutines;
+	__please_delete_me = GetCurrentFiber();
+	SwitchToFiber(__current_yield_fiber);
 }
 
 #else
@@ -137,6 +163,7 @@ static inline void __coroutine_entry_point(void (*func_ptr)(Args...), std::tuple
 										   void* stack_pointer)
 {
 	std::apply(func_ptr, *arg_pack);
+	-- out_standing_coroutines;
 	delete arg_pack;
 
 	// 然后想办法 free(stack_pointer);
@@ -162,6 +189,8 @@ static inline void __coroutine_entry_point(void (*func_ptr)(Args...), std::tuple
 template<typename... Args>
 inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 {
+	++ out_standing_coroutines;
+
 #ifdef _WIN32
 
 	FiberParamPack fiber_param;
@@ -204,6 +233,11 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 	swapcontext(&self, new_ctx);
 	__current_yield_ctx = old;
 #endif // _WIN32
+}
+
+inline void exit_event_loop_when_empty(HANDLE iocp_handle)
+{
+    PostQueuedCompletionStatus(iocp_handle, 0, (ULONG_PTR) iocp_handle, NULL);
 }
 
 #endif // ___UNIVERSAL_FIBER__H___
