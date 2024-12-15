@@ -1,0 +1,128 @@
+# This starter workflow is for a CMake project running on multiple platforms. There is a different starter workflow if you just want a single platform.
+# See: https://github.com/actions/starter-workflows/blob/main/ci/cmake-single-platform.yml
+name: Build
+
+on:
+  push:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      # Set fail-fast to false to ensure that feedback is delivered for all matrix combinations. Consider changing this to true when your workflow is stable.
+      fail-fast: false
+
+      # Set up a matrix to run the following 3 configurations:
+      # 1. <Windows, Release, latest MSVC compiler toolchain on the default runner image, default generator>
+      # 2. <Linux, Release, latest GCC compiler toolchain on the default runner image, default generator>
+      # 3. <Linux, Release, latest Clang compiler toolchain on the default runner image, default generator>
+      #
+      # To add more build types (Release, Debug, RelWithDebInfo, etc.) customize the build_type list.
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+        build_type: [RelWithDebInfo, Debug]
+        c_compiler: [gcc, clang, cl]
+        include:
+          - os: windows-latest
+            c_compiler: cl
+            cpp_compiler: cl
+          - os: ubuntu-24.04
+            c_compiler: clang
+            cpp_compiler: clang++
+        exclude:
+          - os: windows-latest
+            c_compiler: gcc
+          - os: windows-latest
+            c_compiler: clang
+          - os: ubuntu-24.04
+            c_compiler: cl
+          - os: macos-latest
+            c_compiler: cl
+          - os: macos-latest
+            c_compiler: gcc
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install ninja-build tool
+      uses: seanmiddleditch/gha-setup-ninja@v5
+
+    - name: compiler setup on Linux
+      if: startsWith(runner.os, 'Linux')
+      shell: bash
+      run: |
+        echo "CC=${{ matrix.c_compiler }}" >> $GITHUB_ENV
+        echo "CXX=${{ matrix.cpp_compiler }}" >> $GITHUB_ENV
+
+    - name: gcc-14 setup on ubnutu
+      if: startsWith(runner.os, 'Linux') && startsWith(matrix.c_compiler, 'gcc')
+      shell: bash
+      run: |
+        echo "CC=gcc-14" >> $GITHUB_ENV
+        echo "CXX=g++-14" >> $GITHUB_ENV
+
+    - name: Clang-18 setup on Mac OS
+      if: startsWith(runner.os, 'macOS') && startsWith(matrix.c_compiler, 'clang')
+      shell: bash
+      run: |
+        echo "CC=$(brew --prefix llvm@15)/bin/clang" >> $GITHUB_ENV
+        echo "CXX=$(brew --prefix llvm@15)/bin/clang++" >> $GITHUB_ENV
+
+    - name: GCC setup on Mac OS
+      if: startsWith(runner.os, 'macOS') && startsWith(matrix.c_compiler, 'gcc')
+      shell: bash
+      run: |
+        echo "CC=gcc-14" >> $GITHUB_ENV
+        echo "CXX=g++-14" >> $GITHUB_ENV
+
+    - name: Set reusable strings
+      # Turn repeated input strings (such as the build output directory) into step outputs. These step outputs can be used throughout the workflow file.
+      id: strings
+      shell: bash
+      run: |
+        echo "build-output-dir=${{ github.workspace }}/build" >> $GITHUB_OUTPUT
+        echo "boost_root=${{ runner.workspace }}/boost" >> $GITHUB_OUTPUT
+        echo "boost_libs=${{ runner.workspace }}/boost/stage/x64/Release/lib" >> $GITHUB_OUTPUT
+        echo "BOOST_ROOT=${{ runner.workspace }}/boost" >> $GITHUB_ENV
+        echo "BOOST_LIBRARYDIR=${{ runner.workspace }}/boost/stage/x64/Release/lib" >> $GITHUB_ENV
+
+    - name: Configure CMake with Ninja
+      if: startsWith(matrix.os, 'ubuntu') || startsWith(matrix.os, 'mac')
+      # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
+      # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
+      run: >
+        cmake -G Ninja -B ${{ steps.strings.outputs.build-output-dir }}
+        -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        -S ${{ github.workspace }}
+        -D "BOOST_ROOT=${{ env.BOOST_ROOT }}"
+        -D "BOOST_LIBRARYDIR=${{ env.BOOST_LIBRARYDIR }}"
+
+    - name: Configure CMake with Visual Studio
+      if: startsWith(runner.os, 'Windows')
+      # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
+      # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
+      run: >
+        cmake -B ${{ steps.strings.outputs.build-output-dir }}
+        -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        -S ${{ github.workspace }}
+        -D "BOOST_ROOT=${{ env.BOOST_ROOT }}"
+        -D "BOOST_LIBRARYDIR=${{ env.BOOST_LIBRARYDIR }}"
+
+    - name: Build
+      # Build your program with the given configuration. Note that --config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
+      run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }} -v
+
+    - name: Upload generic artifacts
+      uses: actions/upload-artifact@v4.4.0
+      with:
+        name: test1-${{ runner.os }}-${{ matrix.c_compiler }}-${{ matrix.build_type }}
+        path: ${{ github.workspace }}/build/test/test1
+
+    - name: Test
+      working-directory: ${{ steps.strings.outputs.build-output-dir }}
+      # Execute tests defined by the CMake configuration. Note that --build-config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
+      # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
+      run: ctest --output-on-failure --build-config ${{ matrix.build_type }}
