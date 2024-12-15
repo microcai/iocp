@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <time.h>
 #pragma comment(lib, "ws2_32.lib")
+#define SOCKET_get_fd(x) (x)
 #else
 #include "iocp.h"
 #include <time.h>
