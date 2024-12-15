@@ -20,14 +20,24 @@
 
 #endif
 
+#ifdef USE_BOOST_CONTEXT
+#include <boost/context/detail/fcontext.hpp>
+#endif
+
+#include <exception>
 #include <atomic>
 #include <assert.h>
 #include <tuple>
 
+inline std::atomic_long out_standing_coroutines = 0;
+
 typedef struct
 {
 	OVERLAPPED ov;
-#ifdef _WIN32
+#ifdef USE_BOOST_CONTEXT
+	boost::context::detail::fcontext_t resume_context;
+
+#elif defined(_WIN32)
 	LPVOID target_fiber;
 #else
 	ucontext_t target;
@@ -38,18 +48,51 @@ typedef struct
 	BOOL resultOk;
 } FiberOVERLAPPED;
 
-#ifdef _WIN32
-extern __declspec(thread) LPVOID __current_yield_fiber = NULL;
-extern __declspec(thread) LPVOID __please_delete_me = NULL;
+#ifdef USE_BOOST_CONTEXT
 
+inline thread_local boost::context::detail::fcontext_t __current_yield_fcontext;
+
+struct FiberContext
+{
+	unsigned long sp[1024*8];
+
+	unsigned long arg[128];
+
+	void* func_ptr;
+};
+
+inline void handle_fcontext_invoke(boost::context::detail::transfer_t res)
+{
+	if (reinterpret_cast<ULONG_PTR>(res.data) & 1)
+	{
+		delete reinterpret_cast<FiberContext*>(reinterpret_cast<ULONG_PTR>(res.data) ^ 1);
+		-- out_standing_coroutines;
+	}
+	else
+	{
+		auto ov = reinterpret_cast<FiberOVERLAPPED*>(res.data);
+		ov->resume_context = res.fctx;
+	}
+}
+
+#elif defined(_WIN32)
+inline thread_local LPVOID __current_yield_fiber = NULL;
+inline thread_local LPVOID __please_delete_me = NULL;
 #else
-extern _Thread_local ucontext_t* __current_yield_ctx = NULL;
+inline thread_local ucontext_t* __current_yield_ctx = NULL;
 #endif
 
 // wait for overlapped to became complete. return NumberOfBytes
 inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
 {
-#ifdef _WIN32
+
+#ifdef USE_BOOST_CONTEXT
+	assert(__current_yield_fcontext && "get_overlapped_result should be called by a Fiber!");
+
+	__current_yield_fcontext = boost::context::detail::jump_fcontext(__current_yield_fcontext, ov).fctx;
+	return ov->byte_transfered;
+
+#elif defined(_WIN32)
 	assert(__current_yield_fiber && "get_overlapped_result should be called by a Fiber!");
 	ov->target_fiber = GetCurrentFiber();
 	SwitchToFiber(__current_yield_fiber);
@@ -71,8 +114,11 @@ inline void process_overlapped_event(OVERLAPPED* _ov,
 	ovl_res->last_error = last_error;
 	ovl_res->completekey = complete_key;
 	ovl_res->resultOk = resultOk;
+#ifdef USE_BOOST_CONTEXT
+	auto coro_invoke_resume = boost::context::detail::jump_fcontext(ovl_res->resume_context, 0);
+	handle_fcontext_invoke(coro_invoke_resume);
 
-#ifdef _WIN32
+#elif defined(_WIN32)
 	LPVOID old = __current_yield_fiber;
 	__current_yield_fiber = GetCurrentFiber();
 	SwitchToFiber(ovl_res->target_fiber);
@@ -90,8 +136,6 @@ inline void process_overlapped_event(OVERLAPPED* _ov,
 	__current_yield_ctx = old;
 #endif
 }
-
-inline std::atomic_long out_standing_coroutines;
 
 inline int pending_works()
 {
@@ -135,7 +179,40 @@ inline void run_event_loop(HANDLE iocp_handle)
 	}
 }
 
-#ifdef _WIN32
+#ifdef USE_BOOST_CONTEXT
+
+namespace  {
+
+template<typename... Args>
+inline void _fcontext_fn_entry(boost::context::detail::transfer_t arg)
+{
+	__current_yield_fcontext = arg.fctx;
+
+	FiberContext* ctx = reinterpret_cast<FiberContext*>(arg.data);
+
+	using arg_type = std::tuple<Args...>;
+
+	static_assert(sizeof(arg_type) < sizeof(ctx->arg), "argument too large, does not fit into fiber argument pack");
+
+	auto fiber_args = reinterpret_cast<arg_type*>(ctx->arg);
+
+	{
+		typedef void (* real_func_type)(Args...);
+		auto  real_func_ptr = reinterpret_cast<real_func_type>(ctx->func_ptr);
+
+		std::apply(real_func_ptr, std::move(* fiber_args));
+	}
+
+	auto tagged_ptr = reinterpret_cast<ULONG_PTR>(ctx) | 1;
+
+	boost::context::detail::jump_fcontext(__current_yield_fcontext, reinterpret_cast<void*>(tagged_ptr));
+	// should never happens
+	std::terminate();
+}
+
+}
+
+#elif defined(_WIN32)
 
 typedef  struct{
 	LPVOID caller_fiber;
@@ -191,7 +268,23 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 {
 	++ out_standing_coroutines;
 
-#ifdef _WIN32
+#ifdef USE_BOOST_CONTEXT
+
+	FiberContext* new_fiber_ctx = (FiberContext*) malloc(sizeof (FiberContext));
+
+	new_fiber_ctx->func_ptr = reinterpret_cast<void*>(func_ptr);
+
+	using arg_tuple = std::tuple<Args...>;
+
+	// placement new argument passed to function
+	new (new_fiber_ctx->arg) arg_tuple{args...};
+
+	auto new_fiber_resume_ctx = boost::context::detail::make_fcontext(
+			new_fiber_ctx->arg, sizeof(new_fiber_ctx->sp), _fcontext_fn_entry<Args...>);
+	auto new_fiber_invoke_result = boost::context::detail::jump_fcontext(new_fiber_resume_ctx, new_fiber_ctx);
+	handle_fcontext_invoke(new_fiber_invoke_result);
+
+#elif defined(_WIN32)
 
 	FiberParamPack fiber_param;
 	fiber_param.func_ptr = func_ptr;
