@@ -210,8 +210,9 @@ static void init(void)
    bind_listening_socket();
    start_listening();
 
+#ifdef _WIN32
    ConvertThreadToFiber(0);
-
+#endif
    // 并发投递 64 个 accept 操作。加快 accept 速度.
    for (int i=0; i < 64; i++)
       create_detached_coroutine(accept_coroutine, listener);

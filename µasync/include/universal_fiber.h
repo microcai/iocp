@@ -13,10 +13,15 @@
 #ifndef SOCKET_get_fd
 #define SOCKET_get_fd(x) (x)
 #endif
+
+#define UASYNC_API inline
+
 #else
 #include "iocp.h"
 
 #include <ucontext.h>
+
+#define UASYNC_API static
 
 #endif
 
@@ -45,7 +50,7 @@ extern _Thread_local ucontext_t* __current_yield_ctx = NULL;
 #endif
 
 // wait for overlapped to became complete. return NumberOfBytes
-inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
+UASYNC_API DWORD get_overlapped_result(FiberOVERLAPPED* ov)
 {
 #ifdef _WIN32
 	assert(__current_yield_fiber && "get_overlapped_result should be called by a Fiber!");
@@ -61,7 +66,7 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
 }
 
 // call this after GetQueuedCompletionStatus.
-inline void process_overlapped_event(OVERLAPPED* _ov,
+UASYNC_API void process_overlapped_event(OVERLAPPED* _ov,
 			BOOL resultOk, DWORD NumberOfBytes, ULONG_PTR complete_key, DWORD last_error)
 {
 	FiberOVERLAPPED* ovl_res = (FiberOVERLAPPED*)(_ov);
@@ -79,7 +84,7 @@ inline void process_overlapped_event(OVERLAPPED* _ov,
 	{
 		DeleteFiber(__please_delete_me);
 		__please_delete_me = NULL;
-	}	
+	}
 #else
 	ucontext_t self;
 	ucontext_t* old = __current_yield_ctx;
@@ -89,7 +94,7 @@ inline void process_overlapped_event(OVERLAPPED* _ov,
 #endif
 }
 
-inline void run_event_loop(HANDLE iocp_handle)
+UASYNC_API void run_event_loop(HANDLE iocp_handle)
 {
 	for (;;)
 	{
@@ -124,13 +129,13 @@ static inline void WINAPI FiberEntryPoint(LPVOID param)
    SwitchToFiber(saved_param.caller_fiber);
 
    saved_param.func_ptr(saved_param.param);
-   
+
    __please_delete_me = GetCurrentFiber();
    SwitchToFiber(__current_yield_fiber);
 }
 
 #else
-static inline void __coroutine_entry_point(void (*func_ptr)(void* param), void* param, ucontext_t* self_ctx,
+UASYNC_API void __coroutine_entry_point(void (*func_ptr)(void* param), void* param, ucontext_t* self_ctx,
 										   void* stack_pointer)
 {
 	func_ptr(param);
@@ -155,7 +160,7 @@ static inline void __coroutine_entry_point(void (*func_ptr)(void* param), void* 
 }
 #endif // _WIN32
 
-inline void create_detached_coroutine(void (*func_ptr)(void* param), void* param)
+UASYNC_API void create_detached_coroutine(void (*func_ptr)(void* param), void* param)
 {
 #ifdef _WIN32
 
@@ -176,6 +181,7 @@ inline void create_detached_coroutine(void (*func_ptr)(void* param), void* param
 		DeleteFiber(__please_delete_me);
 		__please_delete_me = NULL;
 	}
+
 
 #else  // _WIN32
 	ucontext_t* new_ctx = (ucontext_t*)calloc(1, sizeof(ucontext_t));
