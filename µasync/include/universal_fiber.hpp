@@ -20,7 +20,15 @@
 #if defined (USE_BOOST_CONTEXT)
 #include <boost/context/detail/fcontext.hpp>
 #elif !defined(_WIN32)
-#include <ucontext.h>
+
+#if __APPLE__ && __MACH__
+#define _XOPEN_SOURCE 600
+	#include <sys/ucontext.h>
+	#include <ucontext.h>
+#else
+	#include <ucontext.h>
+#endif
+
 #endif
 
 #include <exception>

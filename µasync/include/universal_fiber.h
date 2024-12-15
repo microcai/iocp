@@ -19,7 +19,13 @@
 #else
 #include "iocp.h"
 
-#include <ucontext.h>
+#if __APPLE__ && __MACH__
+#define _XOPEN_SOURCE 600
+	#include <sys/ucontext.h>
+	#include <ucontext.h>
+#else
+	#include <ucontext.h>
+#endif
 
 #define UASYNC_API static
 

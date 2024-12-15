@@ -28,7 +28,10 @@ static void echo_client(HANDLE iocp_handle, const char* lp_server_addr)
 
 	CreateIoCompletionPort((HANDLE)(sock), iocp_handle, 0, 0);
 
-	SOCKADDR_IN server_addr = {AF_INET, htons(50001), inet_addr(lp_server_addr) };
+	SOCKADDR_IN server_addr = {};
+	server_addr.sin_family = AF_INET;
+	server_addr.sin_port = htons(50001);
+	server_addr.sin_addr.s_addr = inet_addr(lp_server_addr);
 
 	FiberOVERLAPPED ov;
 
