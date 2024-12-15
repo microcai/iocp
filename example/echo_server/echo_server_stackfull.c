@@ -109,7 +109,7 @@ static void create_listening_socket(void)
    }
 }
 
-static void client_coroutine(void* param)
+static void echo_sever_client_session(void* param)
 {
    SOCKET client_sock = (SOCKET) param;
 
@@ -171,45 +171,35 @@ static void client_coroutine(void* param)
 
 static void accept_coroutine(void* param)
 {
-   for (;;)
-   {
-      SOCKET new_client_socket = create_accepting_socket();
-      DWORD expected = sizeof(struct sockaddr_in) + 16;
+   char addr_buf[1024];
 
-      printf("* started accepting connections...\n");
+	for (;;)
+	{
+		SOCKET client_socket = WSASocket(AF_INET, SOCK_STREAM, 0, 0, 0, WSA_FLAG_OVERLAPPED);
+		FiberOVERLAPPED ov = { {0}, 0 };
+		DWORD ignore = 0;
 
-      FiberOVERLAPPED listener_ovl;
-      memset(&listener_ovl, 0, sizeof(listener_ovl));
-      // uses listener's completion key and overlapped structure
-      char buf[1024];
+		BOOL result = AcceptEx(listener, client_socket, addr_buf, 0, sizeof (SOCKADDR_IN)+16, sizeof (SOCKADDR_IN)+16, &ignore, &ov.ov);
+		ov.last_error = WSAGetLastError();
 
-      // starts asynchronous accept
-      if (!AcceptEx(listener, new_client_socket, buf, 0 /* no recv */,
-         expected, expected, NULL, &listener_ovl.ov))
-      {
-         int err = WSAGetLastError();
-         if (err != ERROR_IO_PENDING)
-         {
-            printf("* error %d in AcceptEx\n", err);
-            exit(1);
-         }
+		if (!(!result && ov.last_error != WSA_IO_PENDING))
+		{
+			get_overlapped_result(&ov);
+			if (ov.last_error)
+			{
+				closesocket(client_socket);
+				continue;
+			}
+
+			HANDLE read_port = CreateIoCompletionPort((HANDLE)(client_socket), cpl_port, 0, 0);
+			// 开新协程处理连接.
+         create_detached_coroutine(echo_sever_client_session, (LPVOID)client_socket);
       }
-
-      get_overlapped_result(&listener_ovl);
-
-      if (listener_ovl.resultOk)
-      {
-         CreateIoCompletionPort((HANDLE)new_client_socket, cpl_port, 0, 0);
-
-         create_detached_coroutine(client_coroutine, (VOID*)new_client_socket,"client_coro");
-      }
-      else
-      {
-         closesocket(new_client_socket);
-      }
-   }
-
-   return ;
+		else
+		{
+			closesocket(client_socket);
+		}
+	}
 }
 
 static void init(void)
@@ -224,7 +214,7 @@ static void init(void)
 
    // 并发投递 64 个 accept 操作。加快 accept 速度.
    for (int i=0; i < 64; i++)
-      create_detached_coroutine(accept_coroutine, 0, "accept_coro");
+      create_detached_coroutine(accept_coroutine, listener);
 
    printf("back\n");
 }

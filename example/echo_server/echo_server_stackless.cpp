@@ -61,7 +61,7 @@ ucoro::awaitable<void> echo_sever_client_session(SOCKET client_socket)
 
 ucoro::awaitable<void> accept_coro(SOCKET slisten, HANDLE iocp, int af_family)
 {
-	char addr_buff[1024];
+	char addr_buf[1024];
 
 	for (;;)
 	{
@@ -69,18 +69,25 @@ ucoro::awaitable<void> accept_coro(SOCKET slisten, HANDLE iocp, int af_family)
 		awaitable_overlapped ov;
 		DWORD ignore = 0;
 
-		auto result = AcceptEx(slisten, client_socket, addr_buff, 0, sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &ignore, &ov);
+		auto result = AcceptEx(slisten, client_socket, addr_buf, 0, sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &ignore, &ov);
 		ov.last_error = WSAGetLastError();
 
 		if (!(!result && ov.last_error != WSA_IO_PENDING))
 		{
 			co_await get_overlapped_result(ov);
 			if (ov.last_error)
+			{
+				closesocket(client_socket);
 				continue;
+			}
 
 			HANDLE read_port = CreateIoCompletionPort((HANDLE)(client_socket), iocp, 0, 0);
 			// 开新协程处理连接.
 			echo_sever_client_session(client_socket).detach();
+		}
+		else
+		{
+			closesocket(client_socket);
 		}
 	}
 }

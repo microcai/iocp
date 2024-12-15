@@ -20,6 +20,8 @@
 
 #endif
 
+#include <assert.h>
+
 typedef struct
 {
 	OVERLAPPED ov;
@@ -46,9 +48,11 @@ extern _Thread_local ucontext_t* __current_yield_ctx = NULL;
 inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
 {
 #ifdef _WIN32
+	assert(__current_yield_fiber && "get_overlapped_result should be called by a Fiber!");
 	ov->target_fiber = GetCurrentFiber();
 	SwitchToFiber(__current_yield_fiber);
 #else
+	assert(__current_yield_ctx && "get_overlapped_result should be called by a ucontext based coroutine!");
 	swapcontext(&ov->target, __current_yield_ctx);
 #endif
 	DWORD R = ov->byte_transfered;
@@ -57,8 +61,8 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
 }
 
 // call this after GetQueuedCompletionStatus.
-inline void process_overlapped_event(OVERLAPPED* _ov, BOOL resultOk, DWORD NumberOfBytes, ULONG_PTR complete_key,
-									 DWORD last_error)
+inline void process_overlapped_event(OVERLAPPED* _ov,
+			BOOL resultOk, DWORD NumberOfBytes, ULONG_PTR complete_key, DWORD last_error)
 {
 	FiberOVERLAPPED* ovl_res = (FiberOVERLAPPED*)(_ov);
 	ovl_res->byte_transfered = NumberOfBytes;
@@ -67,7 +71,6 @@ inline void process_overlapped_event(OVERLAPPED* _ov, BOOL resultOk, DWORD Numbe
 	ovl_res->resultOk = resultOk;
 
 #ifdef _WIN32
-
 	LPVOID old = __current_yield_fiber;
 	__current_yield_fiber = GetCurrentFiber();
 	SwitchToFiber(ovl_res->target_fiber);
@@ -152,7 +155,7 @@ static inline void __coroutine_entry_point(void (*func_ptr)(void* param), void* 
 }
 #endif // _WIN32
 
-inline void create_detached_coroutine(void (*func_ptr)(void* param), void* param, char* coro_name)
+inline void create_detached_coroutine(void (*func_ptr)(void* param), void* param)
 {
 #ifdef _WIN32
 
