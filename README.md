@@ -12,7 +12,7 @@
 
 - example
 
-    例子代码。
+    例子代码。 例子代码本身的说明请参考 [example/README.md](example/README.md)
 
 - iocp4linux
 
