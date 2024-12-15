@@ -129,7 +129,9 @@ int main()
 #endif
 	{
 		// Addr of listening socket
-		sockaddr_in6 addr = {AF_INET6, htons(PORT) };
+		sockaddr_in6 addr = {};
+		addr.sin6_family = AF_INET6;
+		addr.sin6_port = htons(PORT);
 		DWORD v = 0;
 		#ifdef IPV6_V6ONLY
 		setsockopt(listener6, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&v, sizeof (v));

@@ -15,13 +15,12 @@
 #endif
 #else
 #include "iocp.h"
-
-#include <ucontext.h>
-
 #endif
 
-#ifdef USE_BOOST_CONTEXT
+#if defined (USE_BOOST_CONTEXT)
 #include <boost/context/detail/fcontext.hpp>
+#elif !defined(_WIN32)
+#include <ucontext.h>
 #endif
 
 #include <exception>
@@ -48,10 +47,6 @@ typedef struct
 	BOOL resultOk;
 } FiberOVERLAPPED;
 
-#ifdef USE_BOOST_CONTEXT
-
-inline thread_local boost::context::detail::fcontext_t __current_yield_fcontext;
-
 struct FiberContext
 {
 	unsigned long sp[1024*8];
@@ -59,13 +54,23 @@ struct FiberContext
 	unsigned long arg[128];
 
 	void* func_ptr;
+
+#if !defined (USE_BOOST_CONTEXT) && !defined (_WIN32)
+	ucontext_t ctx;
+#endif
 };
+
+
+#ifdef USE_BOOST_CONTEXT
+
+inline thread_local boost::context::detail::fcontext_t __current_yield_fcontext;
+
 
 inline void handle_fcontext_invoke(boost::context::detail::transfer_t res)
 {
 	if (reinterpret_cast<ULONG_PTR>(res.data) & 1)
 	{
-		delete reinterpret_cast<FiberContext*>(reinterpret_cast<ULONG_PTR>(res.data) ^ 1);
+		free(reinterpret_cast<FiberContext*>(reinterpret_cast<ULONG_PTR>(res.data) ^ 1));
 		-- out_standing_coroutines;
 	}
 	else
@@ -214,19 +219,29 @@ inline void _fcontext_fn_entry(boost::context::detail::transfer_t arg)
 
 #elif defined(_WIN32)
 
-typedef  struct{
+template<typename... Args>
+struct FiberParamPack{
 	LPVOID caller_fiber;
-	void (*func_ptr)(void* param);
-	void* param;
-} FiberParamPack;
+	void (*func_ptr)(Args...);
+	std::tuple<Args...> param;
 
+	FiberParamPack(auto fp, Args... args)
+		: func_ptr(fp)
+		, param(std::forward<Args>(args)...)
+	{}
+};
+
+template<typename... Args>
 static inline void WINAPI FiberEntryPoint(LPVOID param)
 {
-	FiberParamPack saved_param;
-	memcpy(&saved_param, param, sizeof(FiberParamPack));
-	SwitchToFiber(saved_param.caller_fiber);
+	auto converted_param = reinterpret_cast<FiberParamPack<Args...> *>(param);
 
-	saved_param.func_ptr(saved_param.param);
+	std::tuple<Args...> local_copyed_args(std::move(converted_param->param));
+	auto func_ptr = converted_param->func_ptr;
+
+	SwitchToFiber(converted_param->caller_fiber);
+
+	std::apply(func_ptr, std::move(local_copyed_args));
 
 	-- out_standing_coroutines;
 	__please_delete_me = GetCurrentFiber();
@@ -236,17 +251,27 @@ static inline void WINAPI FiberEntryPoint(LPVOID param)
 #else
 
 template<typename... Args>
-static inline void __coroutine_entry_point(void (*func_ptr)(Args...), std::tuple<Args...>* arg_pack, ucontext_t* self_ctx,
-										   void* stack_pointer)
+static inline void __coroutine_entry_point(FiberContext* ctx)
 {
-	std::apply(func_ptr, *arg_pack);
-	-- out_standing_coroutines;
-	delete arg_pack;
+	using arg_type = std::tuple<Args...>;
 
-	// 然后想办法 free(stack_pointer);
+	static_assert(sizeof(arg_type) < sizeof(ctx->arg), "argument too large, does not fit into fiber argument pack");
+
+	auto fiber_args = reinterpret_cast<arg_type*>(ctx->arg);
+
+	{
+		typedef void (* real_func_type)(Args...);
+		auto  real_func_ptr = reinterpret_cast<real_func_type>(ctx->func_ptr);
+
+		std::apply(real_func_ptr, std::move(*fiber_args));
+	}
+
+	-- out_standing_coroutines;
+
+	// 然后想办法 free(ctx);
 
 	ucontext_t helper_ctx;
-	_Thread_local static char helper_stack[256];
+	thread_local static char helper_stack[256];
 
 	getcontext(&helper_ctx);
 	typedef void (*__func)(void);
@@ -256,9 +281,7 @@ static inline void __coroutine_entry_point(void (*func_ptr)(Args...), std::tuple
 	helper_ctx.uc_stack.ss_size = 256;
 	helper_ctx.uc_link = __current_yield_ctx; // self_ctx->uc_link;
 
-	free(self_ctx);
-
-	makecontext(&helper_ctx, (__func)free, 1, stack_pointer);
+	makecontext(&helper_ctx, (__func)free, 1, ctx);
 	setcontext(&helper_ctx);
 }
 #endif // _WIN32
@@ -277,7 +300,7 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 	using arg_tuple = std::tuple<Args...>;
 
 	// placement new argument passed to function
-	new (new_fiber_ctx->arg) arg_tuple{args...};
+	new (new_fiber_ctx->arg) arg_tuple{std::forward<Args>(args)...};
 
 	auto new_fiber_resume_ctx = boost::context::detail::make_fcontext(
 			new_fiber_ctx->arg, sizeof(new_fiber_ctx->sp), _fcontext_fn_entry<Args...>);
@@ -286,12 +309,10 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 
 #elif defined(_WIN32)
 
-	FiberParamPack fiber_param;
-	fiber_param.func_ptr = func_ptr;
-	fiber_param.param = param;
+	FiberParamPack<Args...> fiber_param{func_ptr, args...};
 	fiber_param.caller_fiber = GetCurrentFiber();
 
-	LPVOID new_fiber = CreateFiber(0, FiberEntryPoint, &fiber_param);
+	LPVOID new_fiber = CreateFiber(0, FiberEntryPoint<Args...>, &fiber_param);
 
 	SwitchToFiber(new_fiber);
 	LPVOID old = __current_yield_fiber;
@@ -306,22 +327,32 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 
 
 #else  // _WIN32
-	ucontext_t* new_ctx = (ucontext_t*)calloc(1, sizeof(ucontext_t));
-	void* new_stack = malloc(8192);
+	FiberContext* new_fiber_ctx = (FiberContext*) malloc(sizeof (FiberContext));
 
-	typedef void (*__func)(void);
+	// placement new into
+
+	ucontext_t* new_ctx = & new_fiber_ctx->ctx;
+
+	new_fiber_ctx->func_ptr = reinterpret_cast<void*>(func_ptr);
+
+	using arg_tuple = std::tuple<Args...>;
+
+	// placement new argument passed to function
+	new (new_fiber_ctx->arg) arg_tuple{std::forward<Args>(args)...};
+
 
 	ucontext_t self;
 	ucontext_t* old = __current_yield_ctx;
 	__current_yield_ctx = &self;
 
 	getcontext(new_ctx);
-	new_ctx->uc_stack.ss_sp = new_stack;
+	new_ctx->uc_stack.ss_sp = new_fiber_ctx->sp;
 	new_ctx->uc_stack.ss_flags = 0;
-	new_ctx->uc_stack.ss_size = 8000;
+	new_ctx->uc_stack.ss_size = sizeof(new_fiber_ctx->sp);
 	new_ctx->uc_link = __current_yield_ctx;
-	auto arg_pack_ptr = new std::tuple<Args...>(args...);
-	makecontext(new_ctx, (__func)__coroutine_entry_point<Args...>, 4, func_ptr, arg_pack_ptr, new_ctx, new_stack);
+
+	typedef void (*__func)(void);
+	makecontext(new_ctx, (__func)__coroutine_entry_point<Args...>, 1, new_fiber_ctx);
 
 	swapcontext(&self, new_ctx);
 	__current_yield_ctx = old;

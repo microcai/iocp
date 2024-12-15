@@ -15,8 +15,6 @@
 
 #undef socket
 
-#include <liburing.h>
-
 #include "internal_iocp_struct.hpp"
 
 #include "operation_allocator.hpp"
@@ -36,6 +34,12 @@ IOCP_DECL int WSACleanup()
 {
 	return 0;
 }
+
+IOCP_DECL WORD MAKEWORD(uint a, uint b)
+{
+	return (a << 8) + b;
+}
+
 
 IOCP_DECL DWORD WSASetLastError(DWORD e)
 {
@@ -91,6 +95,7 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 	{
 		iocp->io_.poll();
 		std::scoped_lock<std::mutex> l(iocp->result_mutex);
+
 		if (iocp->results_.empty())
 		{
 			SetLastError(WSA_WAIT_TIMEOUT);
@@ -189,7 +194,7 @@ IOCP_DECL SOCKET WSAAccept(
   _In_        LPCONDITIONPROC lpfnCondition,
   _In_        DWORD_PTR       dwCallbackData)
 {
-	int new_sock = accept4(s->native_handle(), addr, (socklen_t*) addrlen, SOCK_NONBLOCK|SOCK_CLOEXEC);
+	int new_sock = accept(s->native_handle(), addr, (socklen_t*) addrlen);
 	if (new_sock < 0)
 		return INVALID_SOCKET;
 	return new SOCKET_emu_class{ SOCKET_emu_class::tcp_sock{SOCKET_emu_class::internal_fake_io_context,

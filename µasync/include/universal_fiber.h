@@ -135,6 +135,7 @@ static inline void WINAPI FiberEntryPoint(LPVOID param)
 }
 
 #else
+
 UASYNC_API void __coroutine_entry_point(void (*func_ptr)(void* param), void* param, ucontext_t* self_ctx,
 										   void* stack_pointer)
 {
@@ -142,8 +143,9 @@ UASYNC_API void __coroutine_entry_point(void (*func_ptr)(void* param), void* par
 
 	// 然后想办法 free(stack_pointer);
 
+	static _Thread_local char helper_stack[256];
+
 	ucontext_t helper_ctx;
-	_Thread_local static char helper_stack[256];
 
 	getcontext(&helper_ctx);
 	typedef void (*__func)(void);

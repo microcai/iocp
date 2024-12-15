@@ -15,9 +15,6 @@
 #endif
 #else
 #include "iocp.h"
-
-#include <ucontext.h>
-
 #endif
 
 #include <assert.h>

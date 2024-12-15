@@ -53,10 +53,21 @@ static void echo_client(HANDLE iocp_handle, const char* lp_server_addr)
 
 	result = WSASend(sock, &buf, 1, &sent, 0, &ov.ov, 0);
 	ov.last_error = WSAGetLastError();
+
+	DWORD read_bytes = 0, ignore = 0;
+
+	char buffer[100];
+
+	WSABUF readbuf = { .len = sizeof(buffer), .buf = buffer };
+
+	result = WSARecv(sock, &readbuf, 1, &read_bytes, &ignore, &ov.ov, 0);
+	ov.last_error = WSAGetLastError();
 	if (!(!result && ov.last_error != WSA_IO_PENDING))
 	{
-		sent = get_overlapped_result(&ov);
+		read_bytes = get_overlapped_result(&ov);
 	}
+
+	printf("%d bytes readed from server\n", read_bytes);
 
 	exit_event_loop_when_empty(iocp_handle);
 }
@@ -77,9 +88,9 @@ int main(int argc, char* argv[])
 
 #ifdef _WIN32
 	{
+		SOCKET sock = WSASocket(AF_INET6, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 		auto_sockethandle auto_close(sock);
 
-		SOCKET sock = WSASocket(AF_INET6, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 		GUID disconnectex = WSAID_DISCONNECTEX;
 		GUID connect_ex_guid = WSAID_CONNECTEX;
 		DWORD BytesReturned;
