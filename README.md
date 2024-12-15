@@ -1,3 +1,4 @@
+[![actions workflow](https://github.com/microcai/iocp/actions/workflows/ci.yml/badge.svg)](https://github.com/microcai/iocp/actions)
 
 # iocp4linux 和 µasync
 
