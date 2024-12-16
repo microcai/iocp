@@ -57,12 +57,14 @@ typedef struct
 
 struct FiberContext
 {
-	unsigned long sp[1024*8];
+	unsigned long sp[
+		1024*8 - 1
+#if !defined (USE_BOOST_CONTEXT) && !defined (_WIN32)
+		 - sizeof(ucontext_t) / sizeof(unsigned long)
+#endif
+	];
 
-	unsigned long arg[128];
-
-	void* func_ptr;
-
+	void* func_ptr; // NOTE： &func_ptr 相当于栈顶
 #if !defined (USE_BOOST_CONTEXT) && !defined (_WIN32)
 	ucontext_t ctx;
 #endif
@@ -205,9 +207,7 @@ inline void _fcontext_fn_entry(boost::context::detail::transfer_t arg)
 
 	using arg_type = std::tuple<Args...>;
 
-	static_assert(sizeof(arg_type) < sizeof(ctx->arg), "argument too large, does not fit into fiber argument pack");
-
-	auto fiber_args = reinterpret_cast<arg_type*>(ctx->arg);
+	auto fiber_args = reinterpret_cast<arg_type*>(ctx->sp);
 
 	{
 		typedef void (* real_func_type)(Args...);
@@ -263,9 +263,7 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 {
 	using arg_type = std::tuple<Args...>;
 
-	static_assert(sizeof(arg_type) < sizeof(ctx->arg), "argument too large, does not fit into fiber argument pack");
-
-	auto fiber_args = reinterpret_cast<arg_type*>(ctx->arg);
+	auto fiber_args = reinterpret_cast<arg_type*>(ctx->sp);
 
 	{
 		typedef void (* real_func_type)(Args...);
@@ -308,10 +306,10 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 	using arg_tuple = std::tuple<Args...>;
 
 	// placement new argument passed to function
-	new (new_fiber_ctx->arg) arg_tuple{std::forward<Args>(args)...};
+	new (new_fiber_ctx->sp) arg_tuple{std::forward<Args>(args)...};
 
 	auto new_fiber_resume_ctx = boost::context::detail::make_fcontext(
-			new_fiber_ctx->arg, sizeof(new_fiber_ctx->sp), _fcontext_fn_entry<Args...>);
+			&(new_fiber_ctx->func_ptr), sizeof(new_fiber_ctx->sp), _fcontext_fn_entry<Args...>);
 	auto new_fiber_invoke_result = boost::context::detail::jump_fcontext(new_fiber_resume_ctx, new_fiber_ctx);
 	handle_fcontext_invoke(new_fiber_invoke_result);
 
@@ -346,7 +344,7 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 	using arg_tuple = std::tuple<Args...>;
 
 	// placement new argument passed to function
-	new (new_fiber_ctx->arg) arg_tuple{std::forward<Args>(args)...};
+	new (new_fiber_ctx->sp) arg_tuple{std::forward<Args>(args)...};
 
 
 	ucontext_t self;
