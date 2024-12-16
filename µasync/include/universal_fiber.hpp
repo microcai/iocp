@@ -338,6 +338,7 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 
 	__asm("nop");
 
+#	if defined (__x86_64__)
 	__asm (
 		"mov %0, %%rdi\n"
 		"mov %1, %%rsp\n"
@@ -349,6 +350,26 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 		:
 		: "r" (ctx), "r" (new_sp), "r" (current_jump_buf)
 	);
+#	elif defined(__i386__)
+
+	void* _jmp_long_addr = (void*) longjmp;
+
+	__asm (
+		"mov %1, %%esp\n"
+		"push $2\n"
+		"push %2\n"
+		"push %3\n"
+		"push %0\n"
+		"call free@plt\n"
+		"pop %%esi\n"
+		"pop %%esi\n"
+		"call *%%esi\n"
+		:
+		: "m" (ctx), "m" (new_sp), "r" (current_jump_buf), "r" (_jmp_long_addr)
+	);
+#	else
+	static_assert(true, "only x86_64 platform supported");
+#	endif
 
 #endif
 }
@@ -358,15 +379,13 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 template<typename... Args>
 inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 {
+	using arg_tuple = std::tuple<Args...>;
+
 	++ out_standing_coroutines;
 
 #if defined (USE_FCONTEXT) || defined (USE_UCONTEXT) || defined (USE_SETJMP)
 	FiberContext* new_fiber_ctx = (FiberContext*) malloc(sizeof (FiberContext));
-
 	new_fiber_ctx->func_ptr = reinterpret_cast<void*>(func_ptr);
-
-	using arg_tuple = std::tuple<Args...>;
-
 	// placement new argument passed to function
 	new (new_fiber_ctx->sp) arg_tuple{std::forward<Args>(args)...};
 
@@ -404,6 +423,7 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 		entry_point_type entry_func = & __coroutine_entry_point<Args...>;
 		void * new_sp = &new_fiber_ctx->func_ptr;
 
+#	if defined (__x86_64__)
 		__asm (
 			"mov %0, %%rdi\n"
 			"mov %1, %%rsp\n"
@@ -411,8 +431,17 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 		 :
 		 : "r" (new_fiber_ctx), "r" (new_sp), "r" (entry_func)
 		);
-	}
+#	elif defined(__i386__)
+		__asm (
+			"mov %1, %%esp\n"
+			"push %0\n"
+			"call *%2\n"
+		 :
+		 : "r" (new_fiber_ctx), "r" (new_sp), "r" (entry_func)
+		);
+#	endif
 
+	}
 #	endif
 
 #elif defined(USE_WINFIBER)
