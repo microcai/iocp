@@ -56,6 +56,10 @@ static void echo_client(HANDLE iocp_handle, const char* lp_server_addr)
 
 	result = WSASend(sock, &buf, 1, &sent, 0, &ov.ov, 0);
 	ov.last_error = WSAGetLastError();
+	if (!(!result && ov.last_error != WSA_IO_PENDING))
+	{
+		sent = get_overlapped_result(&ov);
+	}
 
 	DWORD read_bytes = 0, ignore = 0;
 
