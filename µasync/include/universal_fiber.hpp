@@ -48,6 +48,10 @@
 #include <setjmp.h>
 #endif
 
+#ifdef __linux__
+#include <sys/mman.h>
+#endif
+
 #include <exception>
 #include <atomic>
 #include <cassert>
@@ -97,12 +101,20 @@ struct FiberContextAlloctor
 {
 	FiberContext* allocate()
 	{
+#ifdef __linux__
+		return (FiberContext*) mmap(0, sizeof(FiberContext), PROT_READ|PROT_WRITE, MAP_GROWSDOWN|MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0);
+#else
 		return (FiberContext*) malloc(sizeof(FiberContext));
+#endif
 	}
 
 	void deallocate(FiberContext* ctx)
 	{
+#ifdef __linux__
+		munmap(ctx, sizeof(FiberContext));
+#else
 		free(ctx);
+#endif
 	}
 };
 
@@ -393,6 +405,7 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 
 	getcontext(&helper_ctx);
 	typedef void (*__func)(void);
+	typedef void (*__func_arg1)(FiberContext*);
 
 	alignas(64) static thread_local char helper_stack[256];
 
@@ -401,7 +414,7 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 	helper_ctx.uc_stack.ss_size = 256;
 	helper_ctx.uc_link = __current_yield_ctx; // self_ctx->uc_link;
 
-	makecontext(&helper_ctx, [](void* ctx){FiberContextAlloctor{}.deallocate((FiberContext*)ctx); }, 1, ctx);
+	makecontext(&helper_ctx, (__func) (__func_arg1) [](FiberContext* ctx){FiberContextAlloctor{}.deallocate(ctx); }, 1, ctx);
 	setcontext(&helper_ctx);
 #else
 	__please_delete_me = ctx;
