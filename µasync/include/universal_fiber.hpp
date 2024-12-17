@@ -93,6 +93,19 @@ struct FiberContext
 #endif
 };
 
+struct FiberContextAlloctor
+{
+	FiberContext* allocate()
+	{
+		return (FiberContext*) malloc(sizeof(FiberContext));
+	}
+
+	void deallocate(FiberContext* ctx)
+	{
+		free(ctx);
+	}
+};
+
 template<typename... Args>
 struct FiberParamPack
 {
@@ -121,7 +134,7 @@ inline void handle_fcontext_invoke(boost::context::detail::transfer_t res)
 {
 	if (reinterpret_cast<ULONG_PTR>(res.data) & 1)
 	{
-		free(reinterpret_cast<FiberContext*>(reinterpret_cast<ULONG_PTR>(res.data) ^ 1));
+		FiberContextAlloctor{}.deallocate(reinterpret_cast<FiberContext*>(reinterpret_cast<ULONG_PTR>(res.data) ^ 1));
 		-- out_standing_coroutines;
 	}
 	else
@@ -172,7 +185,7 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
 	}
 	if (__please_delete_me)
 	{
-		free(__please_delete_me);
+		FiberContextAlloctor{}.deallocate(__please_delete_me);
 		__please_delete_me = NULL;
 	}
 #endif
@@ -218,7 +231,7 @@ inline void process_overlapped_event(OVERLAPPED* _ov,
 	}
 	if (__please_delete_me)
 	{
-		free(__please_delete_me);
+		FiberContextAlloctor{}.deallocate(__please_delete_me);
 		__please_delete_me = NULL;
 	}
 #endif
@@ -324,7 +337,8 @@ inline void execute_on_new_stack(void* new_sp, void (*jump_target)(void*), void 
 	__asm (
 		"mov %0, %%rdi\n"
 		"mov %1, %%rsp\n"
-		"jmp *%2\n"
+		"mov %1, %%rbp\n"
+		"call *%2\n"
 		:
 		: "r" (param), "r" (new_sp), "r" (jump_target)
 	);
@@ -387,7 +401,7 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 	helper_ctx.uc_stack.ss_size = 256;
 	helper_ctx.uc_link = __current_yield_ctx; // self_ctx->uc_link;
 
-	makecontext(&helper_ctx, (__func)free, 1, ctx);
+	makecontext(&helper_ctx, [](void* ctx){FiberContextAlloctor{}.deallocate((FiberContext*)ctx); }, 1, ctx);
 	setcontext(&helper_ctx);
 #else
 	__please_delete_me = ctx;
@@ -405,7 +419,7 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 	++ out_standing_coroutines;
 
 #if defined (USE_FCONTEXT) || defined (USE_UCONTEXT) || defined (USE_SETJMP)
-	FiberContext* new_fiber_ctx = (FiberContext*) malloc(sizeof (FiberContext));
+	FiberContext* new_fiber_ctx = FiberContextAlloctor{}.allocate();
 	new_fiber_ctx->func_ptr = reinterpret_cast<void*>(func_ptr);
 	// placement new argument passed to function
 	new (new_fiber_ctx->sp) arg_tuple{std::forward<Args>(args)...};
