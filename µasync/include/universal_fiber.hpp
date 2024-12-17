@@ -343,6 +343,7 @@ static inline void WINAPI FiberEntryPoint(LPVOID param)
 
 #elif defined (USE_UCONTEXT) || defined (USE_SETJMP)
 
+#ifdef USE_SETJMP
 inline void execute_on_new_stack(void* new_sp, void (*jump_target)(void*), void * param)
 {
 #if defined (__x86_64__)
@@ -380,6 +381,7 @@ inline void execute_on_new_stack(void* new_sp, void (*jump_target)(void*), void 
 
 #endif
 }
+#endif
 
 template<typename... Args>
 static inline void __coroutine_entry_point(FiberContext* ctx)
