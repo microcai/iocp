@@ -16,41 +16,22 @@ enum // configuration
    SERVICE_PORT = 50001
 };
 
-// -----------------------------------------------------------------------------
-
-// the completion port
-static HANDLE cpl_port;
-
-// the listening socket
-static SOCKET listener;
-
-// -----------------------------------------------------------------------------
-
 // prototypes - main functions
 static void init(void);
 // prototypes - helper functions
 
-static void bind_listening_socket(void);
+static void bind_listening_socket(SOCKET);
 static SOCKET create_accepting_socket(void);
-static void create_io_completion_port(void);
-static void create_listening_socket(void);
+static HANDLE create_io_completion_port(void);
+static SOCKET create_listening_socket(HANDLE cpl_port);
 static BOOL get_completion_status(DWORD*, ULONG_PTR*, OVERLAPPED**);
 static void init_winsock(void);
 static void prepare_endpoint(struct sockaddr_in*, u_long, u_short);
-static void start_listening(void);
+static void start_listening(SOCKET);
 
 // -----------------------------------------------------------------------------
 
-int main(void)
-{
-   init();
-   run_event_loop(cpl_port);
-   return 0;
-}
-
-// -----------------------------------------------------------------------------
-
-static void bind_listening_socket(void)
+static void bind_listening_socket(SOCKET listener)
 {
    struct sockaddr_in sin;
 
@@ -79,22 +60,23 @@ static SOCKET create_accepting_socket(void)
 
 // -----------------------------------------------------------------------------
 
-static void create_io_completion_port(void)
+static HANDLE create_io_completion_port(void)
 {
-   cpl_port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+   HANDLE cpl_port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
    if (!cpl_port)
    {
       int err = WSAGetLastError();
       printf("* error %d in line %d CreateIoCompletionPort\n", err, __LINE__);
       exit(1);
    }
+   return cpl_port;
 }
 
 // -----------------------------------------------------------------------------
 
-static void create_listening_socket(void)
+static SOCKET create_listening_socket(HANDLE cpl_port)
 {
-   listener = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0 , 0, WSA_FLAG_OVERLAPPED);
+   SOCKET listener = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0 , 0, WSA_FLAG_OVERLAPPED);
    if (listener == INVALID_SOCKET)
    {
       printf("* error creating listening socket!\n");
@@ -107,6 +89,7 @@ static void create_listening_socket(void)
       printf("* error %d in listener\n", err);
       exit(1);
    }
+   return listener;
 }
 
 static void echo_sever_client_session(void* param)
@@ -169,9 +152,18 @@ static void echo_sever_client_session(void* param)
    return;
 }
 
+
+struct accept_coro_param_pack
+{
+   SOCKET listener;
+   HANDLE iocp_handle;
+};
+
 static void accept_coroutine(void* param)
 {
    char addr_buf[1024];
+   SOCKET listener = ((struct accept_coro_param_pack*)param)->listener;
+   SOCKET iocp_handle = ((struct accept_coro_param_pack*)param)->iocp_handle;
 
 	for (;;)
 	{
@@ -191,7 +183,7 @@ static void accept_coroutine(void* param)
 				continue;
 			}
 
-			HANDLE read_port = CreateIoCompletionPort((HANDLE)(client_socket), cpl_port, 0, 0);
+			HANDLE read_port = CreateIoCompletionPort((HANDLE)(client_socket), iocp_handle, 0, 0);
 			// 开新协程处理连接.
          create_detached_coroutine(echo_sever_client_session, (LPVOID)client_socket);
       }
@@ -200,24 +192,6 @@ static void accept_coroutine(void* param)
 			closesocket(client_socket);
 		}
 	}
-}
-
-static void init(void)
-{
-   init_winsock();
-   create_io_completion_port();
-   create_listening_socket();
-   bind_listening_socket();
-   start_listening();
-
-#ifdef _WIN32
-   ConvertThreadToFiber(0);
-#endif
-   // 并发投递 64 个 accept 操作。加快 accept 速度.
-   for (int i=0; i < 64; i++)
-      create_detached_coroutine(accept_coroutine, listener);
-
-   printf("back\n");
 }
 
 // -----------------------------------------------------------------------------
@@ -243,7 +217,7 @@ static void prepare_endpoint(struct sockaddr_in* sin, u_long address,
    sin->sin_port = htons(port);
 }
 
-static void start_listening(void)
+static void start_listening(SOCKET listener)
 {
    if (listen(SOCKET_get_fd(listener), 100) == SOCKET_ERROR)
    {
@@ -251,6 +225,31 @@ static void start_listening(void)
       exit(1);
    }
    printf("* started listening for connection requests...\n");
+}
+
+// -----------------------------------------------------------------------------
+int main(void)
+{
+   init_winsock();
+   HANDLE cpl_port = create_io_completion_port();
+   SOCKET listener = create_listening_socket(cpl_port);
+   bind_listening_socket(listener);
+   start_listening(listener);
+
+#ifdef _WIN32
+   ConvertThreadToFiber(0);
+#endif
+
+   struct accept_coro_param_pack param;
+   param.listener = listener;
+   param.iocp_handle = cpl_port;
+
+   // 并发投递 64 个 accept 操作。加快 accept 速度.
+   for (int i=0; i < 64; i++)
+      create_detached_coroutine(accept_coroutine, &param);
+
+   run_event_loop(cpl_port);
+   return 0;
 }
 // -----------------------------------------------------------------------------
 // the end
