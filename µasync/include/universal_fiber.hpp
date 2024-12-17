@@ -79,13 +79,15 @@ typedef struct FiberOVERLAPPED
 struct FiberContext
 {
 	unsigned long long sp[
-		1024*8 - 1
+		1024*8 - 64/sizeof(unsigned long long) - 64/sizeof(unsigned long long)
 #if defined (USE_UCONTEXT)
 		 - sizeof(ucontext_t) / sizeof(unsigned  long long)
 #endif
 	];
 
-	alignas(unsigned long long) void* func_ptr; // NOTE： &func_ptr 相当于栈顶
+	alignas(64) unsigned long long sp_top[8];
+
+	alignas(64) void* func_ptr; // NOTE： &func_ptr 相当于栈顶
 #if defined (USE_UCONTEXT)
 	ucontext_t ctx;
 #endif
@@ -135,7 +137,15 @@ inline thread_local LPVOID __please_delete_me = NULL;
 #elif defined (USE_UCONTEXT)
 inline thread_local ucontext_t* __current_yield_ctx = NULL;
 #elif defined (USE_SETJMP)
+
+struct HelperStack
+{
+	alignas(64) char sp[448];
+	alignas(64) char sp_top[1];
+};
+
 inline thread_local jmp_buf __current_jump_buf;
+inline thread_local FiberContext* __please_delete_me;
 #endif
 
 // wait for overlapped to became complete. return NumberOfBytes
@@ -159,6 +169,11 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
 	if (!setjmp(ov->target_jmp))
 	{
 		longjmp(__current_jump_buf, 1);
+	}
+	if (__please_delete_me)
+	{
+		free(__please_delete_me);
+		__please_delete_me = NULL;
 	}
 #endif
 	DWORD R = ov->byte_transfered;
@@ -200,6 +215,11 @@ inline void process_overlapped_event(OVERLAPPED* _ov,
 	if (set_jmp_ret == 0)
 	{
 		longjmp(ovl_res->target_jmp, 1);
+	}
+	if (__please_delete_me)
+	{
+		free(__please_delete_me);
+		__please_delete_me = NULL;
 	}
 #endif
 }
@@ -298,6 +318,43 @@ static inline void WINAPI FiberEntryPoint(LPVOID param)
 
 #elif defined (USE_UCONTEXT) || defined (USE_SETJMP)
 
+inline void execute_on_new_stack(void* new_sp, void (*jump_target)(void*), void * param)
+{
+#if defined (__x86_64__)
+	__asm (
+		"mov %0, %%rdi\n"
+		"mov %1, %%rsp\n"
+		"jmp *%2\n"
+		:
+		: "r" (param), "r" (new_sp), "r" (jump_target)
+	);
+#elif defined(__i386__)
+	__asm (
+		"mov %1, %%esp\n"
+		"push %0\n"
+		"call *%2\n"
+		:
+		: "r" (param), "r" (new_sp), "r" (jump_target)
+	);
+#elif defined(__aarch64__)
+
+	__asm ("nop");
+
+	__asm (
+		"mov x0, %0\n"
+		"mov sp, %1\n"
+		"mov fp, %1\n"
+		"mov x30, %1\n"
+		"br %2\n"
+		:
+		: "r" (param), "r" (new_sp), "r" (jump_target)
+	);
+#else
+	static_assert(false, "only x86_64 platform supported");
+
+#endif
+}
+
 template<typename... Args>
 static inline void __coroutine_entry_point(FiberContext* ctx)
 {
@@ -312,7 +369,6 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 		std::apply(real_func_ptr, std::move(*fiber_args));
 	}
 
-	thread_local static char helper_stack[256];
 
 	-- out_standing_coroutines;
 
@@ -332,45 +388,8 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 	makecontext(&helper_ctx, (__func)free, 1, ctx);
 	setcontext(&helper_ctx);
 #else
-
-	void* new_sp = & helper_stack[ sizeof(helper_stack) - sizeof (void*) ];
-	void* current_jump_buf = __current_jump_buf;
-
-	__asm("nop");
-
-#	if defined (__x86_64__)
-	__asm (
-		"mov %0, %%rdi\n"
-		"mov %1, %%rsp\n"
-		"mov %2, %%r10\n"
-		"call free\n"
-		"mov %%r10, %%rdi\n"
-		"mov $2, %%rsi\n"
-		"call longjmp"
-		:
-		: "r" (ctx), "r" (new_sp), "r" (current_jump_buf)
-	);
-#	elif defined(__i386__)
-
-	void* _jmp_long_addr = (void*) longjmp;
-
-	__asm (
-		"mov %1, %%esp\n"
-		"push $2\n"
-		"push %2\n"
-		"push %3\n"
-		"push %0\n"
-		"call free@plt\n"
-		"pop %%esi\n"
-		"pop %%esi\n"
-		"call *%%esi\n"
-		:
-		: "m" (ctx), "m" (new_sp), "r" (current_jump_buf), "r" (_jmp_long_addr)
-	);
-#	else
-	static_assert(true, "only x86_64 platform supported");
-#	endif
-
+	__please_delete_me = ctx;
+	longjmp(__current_jump_buf, 1);
 #endif
 }
 
@@ -421,27 +440,16 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 		typedef void(*entry_point_type)(FiberContext*);
 
 		entry_point_type entry_func = & __coroutine_entry_point<Args...>;
-		void * new_sp = &new_fiber_ctx->func_ptr;
+		void * new_sp = &new_fiber_ctx->sp_top;
 
-#	if defined (__x86_64__)
-		__asm (
-			"mov %0, %%rdi\n"
-			"mov %1, %%rsp\n"
-			"jmp *%2\n"
-		 :
-		 : "r" (new_fiber_ctx), "r" (new_sp), "r" (entry_func)
-		);
-#	elif defined(__i386__)
-		__asm (
-			"mov %1, %%esp\n"
-			"push %0\n"
-			"call *%2\n"
-		 :
-		 : "r" (new_fiber_ctx), "r" (new_sp), "r" (entry_func)
-		);
-#	endif
-
+		execute_on_new_stack(new_sp, reinterpret_cast<void (*)(void*)>(entry_func), new_fiber_ctx);
 	}
+	if (__please_delete_me)
+	{
+		free(__please_delete_me);
+		__please_delete_me = NULL;
+	}
+
 #	endif
 
 #elif defined(USE_WINFIBER)
