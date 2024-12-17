@@ -118,30 +118,7 @@ struct FiberContextAlloctor
 	}
 };
 
-template<typename... Args>
-struct FiberParamPack
-{
-#if defined (USE_WINFIBER)
-	LPVOID caller_fiber;
-#elif defined (USE_SETJMP)
-	jmp_buf caller_jmp_buf;
-#endif
-
-	void (*func_ptr)(Args...);
-	std::tuple<Args...> param;
-
-	FiberParamPack(auto fp, Args... args)
-		: func_ptr(fp)
-		, param(std::forward<Args>(args)...)
-	{}
-};
-
-
-#ifdef USE_FCONTEXT
-
-inline thread_local boost::context::detail::fcontext_t __current_yield_fcontext;
-
-
+#if defined(USE_FCONTEXT)
 inline void handle_fcontext_invoke(boost::context::detail::transfer_t res)
 {
 	if (reinterpret_cast<ULONG_PTR>(res.data) & 1)
@@ -155,7 +132,13 @@ inline void handle_fcontext_invoke(boost::context::detail::transfer_t res)
 		ov->resume_context = res.fctx;
 	}
 }
+#endif
 
+// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+// global thread_local data for coroutine usage
+// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+#if defined(USE_FCONTEXT)
+inline thread_local boost::context::detail::fcontext_t __current_yield_fcontext;
 #elif defined(USE_WINFIBER)
 inline thread_local LPVOID __current_yield_fiber = NULL;
 inline thread_local LPVOID __please_delete_me = NULL;
@@ -172,25 +155,51 @@ struct HelperStack
 inline thread_local jmp_buf __current_jump_buf;
 inline thread_local FiberContext* __please_delete_me;
 #endif
+// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
+
+// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+//  diffrent impl for "DWORD get_overlapped_result(FiberOVERLAPPED* ov)"
+// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+#if defined(USE_FCONTEXT)
 // wait for overlapped to became complete. return NumberOfBytes
 inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
 {
-
-#ifdef USE_FCONTEXT
 	assert(__current_yield_fcontext && "get_overlapped_result should be called by a Fiber!");
 
 	__current_yield_fcontext = boost::context::detail::jump_fcontext(__current_yield_fcontext, ov).fctx;
+	WSASetLastError(ov->last_error);
 	return ov->byte_transfered;
+}
 
 #elif defined(USE_WINFIBER)
+
+inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
+{
 	assert(__current_yield_fiber && "get_overlapped_result should be called by a Fiber!");
 	ov->target_fiber = GetCurrentFiber();
 	SwitchToFiber(__current_yield_fiber);
+
+	WSASetLastError(ov->last_error);
+	return ov->byte_transfered;
+}
+
 #elif defined (USE_UCONTEXT)
+
+inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
+{
 	assert(__current_yield_ctx && "get_overlapped_result should be called by a ucontext based coroutine!");
 	swapcontext(&ov->target, __current_yield_ctx);
+
+	WSASetLastError(ov->last_error);
+	return ov->byte_transfered;
+}
+
 #elif defined (USE_SETJMP)
+
+inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
+{
 	if (!setjmp(ov->target_jmp))
 	{
 		longjmp(__current_jump_buf, 1);
@@ -200,11 +209,19 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
 		FiberContextAlloctor{}.deallocate(__please_delete_me);
 		__please_delete_me = NULL;
 	}
-#endif
-	DWORD R = ov->byte_transfered;
+
 	WSASetLastError(ov->last_error);
-	return R;
+	return ov->byte_transfered;
 }
+
+#endif
+
+// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+
+// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+//  common api to implement uasync
+// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 // call this after GetQueuedCompletionStatus.
 inline void process_overlapped_event(OVERLAPPED* _ov,
@@ -291,57 +308,18 @@ inline void run_event_loop(HANDLE iocp_handle)
 	}
 }
 
-#ifdef USE_FCONTEXT
-
-namespace  {
-
-template<typename... Args>
-inline void _fcontext_fn_entry(boost::context::detail::transfer_t arg)
+inline void exit_event_loop_when_empty(HANDLE iocp_handle)
 {
-	__current_yield_fcontext = arg.fctx;
-
-	FiberContext* ctx = reinterpret_cast<FiberContext*>(arg.data);
-
-	using arg_type = std::tuple<Args...>;
-
-	auto fiber_args = reinterpret_cast<arg_type*>(ctx->sp);
-
-	{
-		typedef void (* real_func_type)(Args...);
-		auto  real_func_ptr = reinterpret_cast<real_func_type>(ctx->func_ptr);
-
-		std::apply(real_func_ptr, std::move(* fiber_args));
-	}
-
-	auto tagged_ptr = reinterpret_cast<ULONG_PTR>(ctx) | 1;
-
-	boost::context::detail::jump_fcontext(__current_yield_fcontext, reinterpret_cast<void*>(tagged_ptr));
-	// should never happens
-	std::terminate();
+    PostQueuedCompletionStatus(iocp_handle, 0, (ULONG_PTR) iocp_handle, NULL);
 }
 
-}
+// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
-#elif defined(USE_WINFIBER)
 
-template<typename... Args>
-static inline void WINAPI FiberEntryPoint(LPVOID param)
-{
-	auto converted_param = reinterpret_cast<FiberParamPack<Args...> *>(param);
 
-	std::tuple<Args...> local_copyed_args(std::move(converted_param->param));
-	auto func_ptr = converted_param->func_ptr;
-
-	SwitchToFiber(converted_param->caller_fiber);
-
-	std::apply(func_ptr, std::move(local_copyed_args));
-
-	-- out_standing_coroutines;
-	__please_delete_me = GetCurrentFiber();
-	SwitchToFiber(__current_yield_fiber);
-}
-
-#elif defined (USE_UCONTEXT) || defined (USE_SETJMP)
+// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+// different stackfull implementations
+// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 #ifdef USE_SETJMP
 inline void execute_on_new_stack(void* new_sp, void (*jump_target)(void*), void * param)
@@ -383,9 +361,56 @@ inline void execute_on_new_stack(void* new_sp, void (*jump_target)(void*), void 
 }
 #endif
 
+#if defined(USE_WINFIBER)
+
 template<typename... Args>
-static inline void __coroutine_entry_point(FiberContext* ctx)
+struct FiberParamPack
 {
+	LPVOID caller_fiber;
+
+	void (*func_ptr)(Args...);
+	std::tuple<Args...> param;
+
+	FiberParamPack(auto fp, Args... args)
+		: func_ptr(fp)
+		, param(std::forward<Args>(args)...)
+	{}
+};
+
+template<typename... Args>
+static inline void WINAPI __coroutine_entry_point(LPVOID param)
+{
+	auto converted_param = reinterpret_cast<FiberParamPack<Args...> *>(param);
+
+	std::tuple<Args...> local_copyed_args(std::move(converted_param->param));
+	auto func_ptr = converted_param->func_ptr;
+
+	SwitchToFiber(converted_param->caller_fiber);
+
+	std::apply(func_ptr, std::move(local_copyed_args));
+
+	-- out_standing_coroutines;
+	__please_delete_me = GetCurrentFiber();
+	SwitchToFiber(__current_yield_fiber);
+}
+#endif // defined(USE_WINFIBER)
+
+
+#if defined (USE_UCONTEXT) || defined (USE_SETJMP) || defined (USE_FCONTEXT)
+
+template<typename... Args>
+#if defined (USE_FCONTEXT)
+inline void __coroutine_entry_point(boost::context::detail::transfer_t arg)
+#else //if defined (USE_UCONTEXT) || defined (USE_SETJMP)
+static inline void __coroutine_entry_point(FiberContext* ctx)
+#endif
+{
+
+#ifdef USE_FCONTEXT
+	__current_yield_fcontext = arg.fctx;
+	FiberContext* ctx = reinterpret_cast<FiberContext*>(arg.data);
+#endif
+
 	using arg_type = std::tuple<Args...>;
 
 	auto fiber_args = reinterpret_cast<arg_type*>(ctx->sp);
@@ -397,10 +422,15 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 		std::apply(real_func_ptr, std::move(*fiber_args));
 	}
 
-
 	-- out_standing_coroutines;
 
-#if defined (USE_UCONTEXT)
+#if defined (USE_FCONTEXT)
+	auto tagged_ptr = reinterpret_cast<ULONG_PTR>(ctx) | 1;
+
+	boost::context::detail::jump_fcontext(__current_yield_fcontext, reinterpret_cast<void*>(tagged_ptr));
+	// should never happens
+	std::terminate();
+#elif defined (USE_UCONTEXT)
 	// 然后想办法 free(ctx);
 
 	ucontext_t helper_ctx;
@@ -418,13 +448,15 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 
 	makecontext(&helper_ctx, (__func) (__func_arg1) [](FiberContext* ctx){FiberContextAlloctor{}.deallocate(ctx); }, 1, ctx);
 	setcontext(&helper_ctx);
-#else
+#elif defined(USE_SETJMP)
 	__please_delete_me = ctx;
 	longjmp(__current_jump_buf, 1);
 #endif
-}
 
-#endif // _WIN32
+}
+#endif
+
+#if defined (USE_FCONTEXT) || defined (USE_UCONTEXT) || defined (USE_SETJMP)
 
 template<typename... Args>
 inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
@@ -433,16 +465,14 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 
 	++ out_standing_coroutines;
 
-#if defined (USE_FCONTEXT) || defined (USE_UCONTEXT) || defined (USE_SETJMP)
 	FiberContext* new_fiber_ctx = FiberContextAlloctor{}.allocate();
 	new_fiber_ctx->func_ptr = reinterpret_cast<void*>(func_ptr);
 	// placement new argument passed to function
 	new (new_fiber_ctx->sp) arg_tuple{std::forward<Args>(args)...};
 
 #	if defined(USE_FCONTEXT)
-
 	auto new_fiber_resume_ctx = boost::context::detail::make_fcontext(
-			&(new_fiber_ctx->func_ptr), sizeof(new_fiber_ctx->sp), _fcontext_fn_entry<Args...>);
+			&(new_fiber_ctx->func_ptr), sizeof(new_fiber_ctx->sp), __coroutine_entry_point<Args...>);
 	auto new_fiber_invoke_result = boost::context::detail::jump_fcontext(new_fiber_resume_ctx, new_fiber_ctx);
 	handle_fcontext_invoke(new_fiber_invoke_result);
 #	elif defined (USE_UCONTEXT)
@@ -482,13 +512,21 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 	}
 
 #	endif
+}
 
-#elif defined(USE_WINFIBER)
+#endif
+
+#if defined(USE_WINFIBER)
+
+template<typename... Args>
+inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
+{
+	++ out_standing_coroutines;
 
 	FiberParamPack<Args...> fiber_param{func_ptr, args...};
 	fiber_param.caller_fiber = GetCurrentFiber();
 
-	LPVOID new_fiber = CreateFiber(0, FiberEntryPoint<Args...>, &fiber_param);
+	LPVOID new_fiber = CreateFiber(0, __coroutine_entry_point<Args...>, &fiber_param);
 
 	SwitchToFiber(new_fiber);
 	LPVOID old = __current_yield_fiber;
@@ -500,13 +538,11 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 		DeleteFiber(__please_delete_me);
 		__please_delete_me = NULL;
 	}
-
-#endif // _WIN32
 }
 
-inline void exit_event_loop_when_empty(HANDLE iocp_handle)
-{
-    PostQueuedCompletionStatus(iocp_handle, 0, (ULONG_PTR) iocp_handle, NULL);
-}
+#endif // USE_WINFIBER
+
+// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
 
 #endif // ___UNIVERSAL_FIBER__H___
