@@ -22,8 +22,8 @@
 #elif defined(_WIN32)
 #define USE_WINFIBER
 #elif defined(__APPLE__) && defined(__MACH__)
-#define USE_UCONTEXT
-//#define USE_SETJMP
+// #define USE_UCONTEXT
+#define USE_SETJMP
 #elif defined(DISABLE_UCONTEXT)
 #define USE_SETJMP
 #else
