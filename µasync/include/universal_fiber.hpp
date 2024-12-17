@@ -380,6 +380,8 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 	getcontext(&helper_ctx);
 	typedef void (*__func)(void);
 
+	alignas(64) static thread_local char helper_stack[256];
+
 	helper_ctx.uc_stack.ss_sp = helper_stack;
 	helper_ctx.uc_stack.ss_flags = 0;
 	helper_ctx.uc_stack.ss_size = 256;
