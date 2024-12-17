@@ -208,8 +208,17 @@ struct response
 				#endif
 				if (read_file_pending)
 				{
-					// CancelIoEx(file, &file_ov);
+					// socket 发送错误，取消已经投递的文件读取请求
+					CancelIoEx(file, &file_ov);
+					// 无视取消是否成功，都等待文件读取请求。
+					// 如果取消失败，（比如实际上文件已经读取成功）
+					// 那么就当是无所谓了。
+					// 如果取消成功，则 get_overlapped_result 会返回个错误
+					// 但是不管 get_overlapped_result 返回的是啥，都已经无关紧要了
+					// 这里还要调用 get_overlapped_result 仅仅是为了避免 退出本
+					// 协程后，&file_ov 已经被系统 API给引用，防止野指针问题.
 					back_readLength = co_await get_overlapped_result(file_ov);
+					// 现在，可以安全的执行 co_return -1 退出协程了.
 				}
 				#ifdef _DEBUG
 				printf("Error sending body, canceled FILE read...\n");
