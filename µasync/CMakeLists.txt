@@ -3,8 +3,8 @@
 option(DISABLE_BOOST_CONTEXT "use ucontext even if boost is found" OFF)
 option(DISABLE_UCONTEXT "disable ucontext and use setjmp/longjmp" OFF)
 
+cmake_policy(SET CMP0167 NEW)
 find_package(Boost 1.86 COMPONENTS context)
-
 
 
 add_library(uasync INTERFACE)
