@@ -36,13 +36,24 @@ static void echo_client(HANDLE iocp_handle, const char* lp_server_addr)
 
 	FiberOVERLAPPED ov;
 
+
 	auto result = WSAConnectEx(sock, (const SOCKADDR*) &server_addr, INET_ADDRSTRLEN, 0, 0, 0, &ov.ov);
+
+	float c = ov.last_error + 1;
+
+	c*=99;
+	printf("c = %f before\n", c);
+
 	ov.last_error = WSAGetLastError();
 
 	if (!(!result && ov.last_error != WSA_IO_PENDING))
 	{
 		get_overlapped_result(&ov);
 	}
+
+	c /= 99;
+
+	printf("c = %f\n", c);
 
 	if (ov.last_error)
 	{
@@ -113,7 +124,13 @@ int main(int argc, char* argv[])
 
 #endif
 
+	float cc = 8;
+	cc *= argc;
+	printf("cc = %f before\n", cc);
 	create_detached_coroutine(echo_client, iocp_handle, (const char*)(argc == 2 ? argv[1] : "127.0.0.1"));
+	cc *= argc;
+
+	printf("cc = %f\n", cc);
 
 	run_event_loop(iocp_handle);
 	CloseHandle(iocp_handle);

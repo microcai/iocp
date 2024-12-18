@@ -26,7 +26,7 @@
 #define USE_SETJMP
 #elif defined(DISABLE_UCONTEXT)
 #define USE_SETJMP
-#else
+#elif !defined(USE_ZCONTEXT)
 #define USE_UCONTEXT
 #endif
 
@@ -46,6 +46,8 @@
 #endif
 #elif defined(USE_SETJMP)
 #include <setjmp.h>
+#elif defined(USE_ZCONTEXT)
+#include "zcontext.h"
 #endif
 
 #ifdef __linux__
@@ -72,6 +74,8 @@ typedef struct FiberOVERLAPPED
 	ucontext_t target;
 #elif defined (USE_SETJMP)
 	jmp_buf target_jmp;
+#elif defined (USE_ZCONTEXT)
+	zcontext_t target;
 #endif
 
 	DWORD byte_transfered;
@@ -79,6 +83,12 @@ typedef struct FiberOVERLAPPED
 	ULONG_PTR completekey;
 	BOOL resultOk;
 } FiberOVERLAPPED;
+
+struct HelperStack
+{
+	alignas(64) char sp[448];
+	alignas(64) char sp_top[1];
+};
 
 struct FiberContext
 {
@@ -94,6 +104,8 @@ struct FiberContext
 	alignas(64) void* func_ptr; // NOTE： &func_ptr 相当于栈顶
 #if defined (USE_UCONTEXT)
 	ucontext_t ctx;
+#elif defined (USE_ZCONTEXT)
+	zcontext_t ctx;
 #endif
 };
 
@@ -145,15 +157,10 @@ inline thread_local LPVOID __please_delete_me = NULL;
 #elif defined (USE_UCONTEXT)
 inline thread_local ucontext_t* __current_yield_ctx = NULL;
 #elif defined (USE_SETJMP)
-
-struct HelperStack
-{
-	alignas(64) char sp[448];
-	alignas(64) char sp_top[1];
-};
-
 inline thread_local jmp_buf __current_jump_buf;
 inline thread_local FiberContext* __please_delete_me;
+#elif  defined (USE_ZCONTEXT)
+inline thread_local zcontext_t* __current_yield_zctx = NULL;
 #endif
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
@@ -213,6 +220,17 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
 	WSASetLastError(ov->last_error);
 	return ov->byte_transfered;
 }
+#elif defined (USE_ZCONTEXT)
+
+inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
+{
+	assert(__current_yield_zctx && "get_overlapped_result should be called by a ucontext based coroutine!");
+
+	zcontext_swap(&ov->target, __current_yield_zctx, 0);
+
+	WSASetLastError(ov->last_error);
+	return ov->byte_transfered;
+}
 
 #endif
 
@@ -261,6 +279,17 @@ inline void process_overlapped_event(OVERLAPPED* _ov,
 	if (__please_delete_me)
 	{
 		FiberContextAlloctor{}.deallocate(__please_delete_me);
+		__please_delete_me = NULL;
+	}
+#elif defined (USE_ZCONTEXT)
+	zcontext_t self;
+	zcontext_t* old = __current_yield_zctx;
+	__current_yield_zctx = &self;
+	auto __please_delete_me = zcontext_swap(&self, &ovl_res->target, 0);
+	__current_yield_zctx = old;
+	if (__please_delete_me)
+	{
+		FiberContextAlloctor{}.deallocate((FiberContext*)__please_delete_me);
 		__please_delete_me = NULL;
 	}
 #endif
@@ -321,7 +350,7 @@ inline void exit_event_loop_when_empty(HANDLE iocp_handle)
 // different stackfull implementations
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-#ifdef USE_SETJMP
+#if defined (USE_SETJMP) || defined (USE_ZCONTEXT)
 inline void execute_on_new_stack(void* new_sp, void (*jump_target)(void*), void * param)
 {
 #if defined (__x86_64__)
@@ -396,12 +425,12 @@ static inline void WINAPI __coroutine_entry_point(LPVOID param)
 #endif // defined(USE_WINFIBER)
 
 
-#if defined (USE_UCONTEXT) || defined (USE_SETJMP) || defined (USE_FCONTEXT)
+#if defined (USE_UCONTEXT) || defined (USE_SETJMP) || defined (USE_FCONTEXT) || defined (USE_ZCONTEXT)
 
 template<typename... Args>
 #if defined (USE_FCONTEXT)
 inline void __coroutine_entry_point(boost::context::detail::transfer_t arg)
-#else //if defined (USE_UCONTEXT) || defined (USE_SETJMP)
+#else //if defined (USE_UCONTEXT) || defined (USE_SETJMP) || defined (USE_ZCONTEXT)
 static inline void __coroutine_entry_point(FiberContext* ctx)
 #endif
 {
@@ -418,7 +447,6 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 	{
 		typedef void (* real_func_type)(Args...);
 		auto  real_func_ptr = reinterpret_cast<real_func_type>(ctx->func_ptr);
-
 		std::apply(real_func_ptr, std::move(*fiber_args));
 	}
 
@@ -451,12 +479,15 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 #elif defined(USE_SETJMP)
 	__please_delete_me = ctx;
 	longjmp(__current_jump_buf, 1);
+#elif defined (USE_ZCONTEXT)
+	zcontext_t self;
+	zcontext_swap(&self, __current_yield_zctx, ctx);
 #endif
 
 }
 #endif
 
-#if defined (USE_FCONTEXT) || defined (USE_UCONTEXT) || defined (USE_SETJMP)
+#if defined (USE_FCONTEXT) || defined (USE_UCONTEXT) || defined (USE_ZCONTEXT)
 
 template<typename... Args>
 inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
@@ -482,10 +513,13 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 	__current_yield_ctx = &self;
 
 	ucontext_t* new_ctx = & new_fiber_ctx->ctx;
+
+	auto stack_size = (new_fiber_ctx->sp_top - new_fiber_ctx->sp) * sizeof (unsigned long long);
+
 	getcontext(new_ctx);
 	new_ctx->uc_stack.ss_sp = new_fiber_ctx->sp;
 	new_ctx->uc_stack.ss_flags = 0;
-	new_ctx->uc_stack.ss_size = sizeof(new_fiber_ctx->sp);
+	new_ctx->uc_stack.ss_size = stack_size;
 	new_ctx->uc_link = __current_yield_ctx;
 
 	typedef void (*__func)(void);
@@ -493,7 +527,48 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 
 	swapcontext(&self, new_ctx);
 	__current_yield_ctx = old;
-#	elif defined (USE_SETJMP)
+#elif defined (USE_ZCONTEXT)
+
+	// setup a new stack, and jump to __coroutine_entry_point
+	typedef void(*entry_point_type)(FiberContext*);
+
+	entry_point_type entry_func = & __coroutine_entry_point<Args...>;
+	unsigned long long * new_sp = new_fiber_ctx->sp_top;
+
+	zcontext_t self;
+	zcontext_t* old = __current_yield_zctx;
+	__current_yield_zctx = &self;
+
+	new_fiber_ctx->ctx.sp = new_sp;
+
+	zcontext_setup(&new_fiber_ctx->ctx, reinterpret_cast<void (*)(void*)>(entry_func), new_fiber_ctx);
+	auto __please_delete_me = zcontext_swap(&self, &new_fiber_ctx->ctx, 0);
+	__current_yield_zctx = old;
+
+	if (__please_delete_me)
+	{
+		FiberContextAlloctor{}.deallocate((FiberContext*) __please_delete_me);
+		__please_delete_me = NULL;
+	}
+#	endif
+}
+
+#endif  //defined (USE_SETJMP) || defined (USE_ZCONTEXT) || defined (USE_ZCONTEXT)
+
+#if defined (USE_SETJMP)
+
+template<typename... Args>
+inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
+{
+	using arg_tuple = std::tuple<Args...>;
+
+	++ out_standing_coroutines;
+
+	FiberContext* new_fiber_ctx = FiberContextAlloctor{}.allocate();
+	new_fiber_ctx->func_ptr = reinterpret_cast<void*>(func_ptr);
+	// placement new argument passed to function
+	new (new_fiber_ctx->sp) arg_tuple{std::forward<Args>(args)...};
+
 	// jmp_buf_fiber_entry(&fiber_param);
 	if (!setjmp(__current_jump_buf))
 	{
@@ -501,20 +576,13 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 		typedef void(*entry_point_type)(FiberContext*);
 
 		entry_point_type entry_func = & __coroutine_entry_point<Args...>;
-		void * new_sp = &new_fiber_ctx->sp_top;
+		void * new_sp = new_fiber_ctx->sp_top;
 
 		execute_on_new_stack(new_sp, reinterpret_cast<void (*)(void*)>(entry_func), new_fiber_ctx);
 	}
-	if (__please_delete_me)
-	{
-		free(__please_delete_me);
-		__please_delete_me = NULL;
-	}
-
-#	endif
 }
 
-#endif
+#endif // defined (USE_SETJMP)
 
 #if defined(USE_WINFIBER)
 

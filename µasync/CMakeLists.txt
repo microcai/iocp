@@ -2,6 +2,7 @@
 
 option(DISABLE_BOOST_CONTEXT "use ucontext even if boost is found" OFF)
 option(DISABLE_UCONTEXT "disable ucontext and use setjmp/longjmp" OFF)
+option(USE_ZCONTEXT "use zcontext api to do context switch" OFF)
 
 cmake_policy(SET CMP0167 NEW)
 find_package(Boost 1.86 COMPONENTS context)
@@ -24,4 +25,11 @@ endif()
 
 if (DISABLE_UCONTEXT)
 target_compile_definitions(uasync INTERFACE -DDISABLE_UCONTEXT=1)
+endif()
+
+if (USE_ZCONTEXT)
+enable_language(ASM)
+add_library(zcontext asm/zcontext_x86_64.S)
+target_compile_definitions(uasync INTERFACE -DUSE_ZCONTEXT=1)
+target_link_libraries(uasync INTERFACE zcontext)
 endif()
