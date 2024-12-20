@@ -1,12 +1,8 @@
 
 
-option(DISABLE_BOOST_CONTEXT "use ucontext even if boost is found" OFF)
+option(DISABLE_BOOST_CONTEXT "disable the usa of boost.context asm" OFF)
 option(DISABLE_UCONTEXT "disable ucontext and use setjmp/longjmp" OFF)
 option(USE_ZCONTEXT "use zcontext api to do context switch" OFF)
-
-cmake_policy(SET CMP0167 NEW)
-find_package(Boost 1.86 COMPONENTS context)
-
 
 add_library(uasync INTERFACE)
 
@@ -18,9 +14,10 @@ endif()
 
 set_property(TARGET uasync PROPERTY CXX_STANDARD 23)
 
-if (BOOST_FOUND AND NOT DISABLE_BOOST_CONTEXT)
-target_compile_definitions(uasync INTERFACE -DUSE_BOOST_CONTEXT=1)
-target_link_libraries(uasync INTERFACE Boost::context)
+if (NOT DISABLE_BOOST_CONTEXT AND NOT WIN32)
+    add_subdirectory(asm)
+    target_compile_definitions(uasync INTERFACE -DUSE_BOOST_CONTEXT=1)
+    target_link_libraries(uasync INTERFACE fcontext)
 endif()
 
 if (DISABLE_UCONTEXT)
