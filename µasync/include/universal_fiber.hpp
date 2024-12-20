@@ -17,6 +17,9 @@
 #include "iocp.h"
 #endif
 
+#include <cstdint>
+#include <cstddef>
+
 #if defined (USE_BOOST_CONTEXT)
 #define USE_FCONTEXT
 #elif defined(_WIN32)
@@ -32,7 +35,17 @@
 
 
 #if defined (USE_FCONTEXT)
-#include <boost/context/detail/fcontext.hpp>
+
+typedef void*   fcontext_t;
+
+struct transfer_t {
+    fcontext_t  fctx;
+    void    *   data;
+};
+
+extern "C" transfer_t jump_fcontext( fcontext_t const to, void * vp);
+extern "C" fcontext_t make_fcontext( void * sp, std::size_t size, void (* fn)( transfer_t) );
+
 #elif defined(USE_WINFIBER)
 
 #elif defined(USE_UCONTEXT)
@@ -66,7 +79,7 @@ typedef struct FiberOVERLAPPED
 {
 	OVERLAPPED ov;
 #if defined (USE_FCONTEXT)
-	boost::context::detail::fcontext_t resume_context;
+	fcontext_t resume_context;
 
 #elif defined(USE_WINFIBER)
 	LPVOID target_fiber;
@@ -131,7 +144,7 @@ struct FiberContextAlloctor
 };
 
 #if defined(USE_FCONTEXT)
-inline void handle_fcontext_invoke(boost::context::detail::transfer_t res)
+inline void handle_fcontext_invoke(transfer_t res)
 {
 	if (reinterpret_cast<ULONG_PTR>(res.data) & 1)
 	{
@@ -150,7 +163,7 @@ inline void handle_fcontext_invoke(boost::context::detail::transfer_t res)
 // global thread_local data for coroutine usage
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 #if defined(USE_FCONTEXT)
-inline thread_local boost::context::detail::fcontext_t __current_yield_fcontext;
+inline thread_local fcontext_t __current_yield_fcontext;
 #elif defined(USE_WINFIBER)
 inline thread_local LPVOID __current_yield_fiber = NULL;
 inline thread_local LPVOID __please_delete_me = NULL;
@@ -175,7 +188,7 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
 {
 	assert(__current_yield_fcontext && "get_overlapped_result should be called by a Fiber!");
 
-	__current_yield_fcontext = boost::context::detail::jump_fcontext(__current_yield_fcontext, ov).fctx;
+	__current_yield_fcontext = jump_fcontext(__current_yield_fcontext, ov).fctx;
 	WSASetLastError(ov->last_error);
 	return ov->byte_transfered;
 }
@@ -251,7 +264,7 @@ inline void process_overlapped_event(OVERLAPPED* _ov,
 	ovl_res->completekey = complete_key;
 	ovl_res->resultOk = resultOk;
 #ifdef USE_FCONTEXT
-	auto coro_invoke_resume = boost::context::detail::jump_fcontext(ovl_res->resume_context, 0);
+	auto coro_invoke_resume = jump_fcontext(ovl_res->resume_context, 0);
 	handle_fcontext_invoke(coro_invoke_resume);
 
 #elif defined(USE_WINFIBER)
@@ -429,7 +442,7 @@ static inline void WINAPI __coroutine_entry_point(LPVOID param)
 
 template<typename... Args>
 #if defined (USE_FCONTEXT)
-inline void __coroutine_entry_point(boost::context::detail::transfer_t arg)
+inline void __coroutine_entry_point(transfer_t arg)
 #else //if defined (USE_UCONTEXT) || defined (USE_SETJMP) || defined (USE_ZCONTEXT)
 static inline void __coroutine_entry_point(FiberContext* ctx)
 #endif
@@ -455,7 +468,7 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 #if defined (USE_FCONTEXT)
 	auto tagged_ptr = reinterpret_cast<ULONG_PTR>(ctx) | 1;
 
-	boost::context::detail::jump_fcontext(__current_yield_fcontext, reinterpret_cast<void*>(tagged_ptr));
+	jump_fcontext(__current_yield_fcontext, reinterpret_cast<void*>(tagged_ptr));
 	// should never happens
 	std::terminate();
 #elif defined (USE_UCONTEXT)
@@ -502,9 +515,8 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 	new (new_fiber_ctx->sp) arg_tuple{std::forward<Args>(args)...};
 
 #	if defined(USE_FCONTEXT)
-	auto new_fiber_resume_ctx = boost::context::detail::make_fcontext(
-			&(new_fiber_ctx->func_ptr), sizeof(new_fiber_ctx->sp), __coroutine_entry_point<Args...>);
-	auto new_fiber_invoke_result = boost::context::detail::jump_fcontext(new_fiber_resume_ctx, new_fiber_ctx);
+	auto new_fiber_resume_ctx = make_fcontext(&(new_fiber_ctx->func_ptr), sizeof(new_fiber_ctx->sp), __coroutine_entry_point<Args...>);
+	auto new_fiber_invoke_result = jump_fcontext(new_fiber_resume_ctx, new_fiber_ctx);
 	handle_fcontext_invoke(new_fiber_invoke_result);
 #	elif defined (USE_UCONTEXT)
 
