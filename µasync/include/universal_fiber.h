@@ -13,7 +13,11 @@
 #define SOCKET_get_fd(x) (x)
 #endif
 
+#ifdef _MSC_VER
 #define UASYNC_API inline
+#else
+#define UASYNC_API static
+#endif
 
 #else
 #include "iocp.h"
