@@ -47,8 +47,13 @@ typedef struct
 } FiberOVERLAPPED;
 
 #ifdef _WIN32
+#ifdef _MSC_VER
 extern __declspec(thread) LPVOID __current_yield_fiber = NULL;
 extern __declspec(thread) LPVOID __please_delete_me = NULL;
+#else
+extern _Thread_local LPVOID __current_yield_fiber = NULL;
+extern _Thread_local LPVOID __please_delete_me = NULL;
+#endif
 
 #else
 extern _Thread_local ucontext_t* __current_yield_ctx = NULL;

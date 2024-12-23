@@ -336,7 +336,7 @@ static void start_writing(SocketState* socketState)
    auto content_length_line_len = snprintf(socketState->buf2, 80, "Content-Length: %d\r\n\r\n", socketState->length);
    WSABUF wsabuf[3] = {
       { .len = 17, .buf = (char*) "HTTP/1.1 200 OK\r\n" },
-      { .len = (size_t) content_length_line_len, .buf = socketState->buf2 },
+      { .len = (unsigned long) content_length_line_len, .buf = socketState->buf2 },
       { socketState->length, socketState->buf }
    };
 

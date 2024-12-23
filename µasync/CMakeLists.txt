@@ -8,7 +8,9 @@ add_library(uasync INTERFACE)
 
 target_include_directories(uasync INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-if (NOT WIN32)
+if (WIN32)
+target_link_libraries(uasync INTERFACE ws2_32)
+else()
 target_link_libraries(uasync INTERFACE iocp4linux)
 endif()
 

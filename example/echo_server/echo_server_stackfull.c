@@ -169,7 +169,7 @@ static void accept_coroutine(void* param)
 {
    char addr_buf[1024];
    SOCKET listener = ((struct accept_coro_param_pack*)param)->listener;
-   SOCKET iocp_handle = ((struct accept_coro_param_pack*)param)->iocp_handle;
+   HANDLE iocp_handle = ((struct accept_coro_param_pack*)param)->iocp_handle;
 
 	for (;;)
 	{

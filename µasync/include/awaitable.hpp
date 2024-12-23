@@ -7,6 +7,8 @@
 
 #include <concepts>
 #include <variant>
+#include <stdexcept>
+#include <exception>
 
 #if defined(__has_include)
 
