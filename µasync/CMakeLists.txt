@@ -14,7 +14,7 @@ endif()
 
 set_property(TARGET uasync PROPERTY CXX_STANDARD 23)
 
-if (NOT DISABLE_BOOST_CONTEXT AND NOT WIN32)
+if (NOT DISABLE_BOOST_CONTEXT)
     add_subdirectory(asm)
     target_compile_definitions(uasync INTERFACE -DUSE_BOOST_CONTEXT=1)
     target_link_libraries(uasync INTERFACE fcontext)

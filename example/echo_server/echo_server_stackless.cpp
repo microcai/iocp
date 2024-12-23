@@ -2,10 +2,6 @@
 
 #include "universal_async.hpp"
 
-#ifdef _WIN32
-LPFN_DISCONNECTEX DisconnectEx = nullptr;
-#endif
-
 #include <stdio.h>
 
 #define PORT 50001
@@ -120,12 +116,7 @@ int main()
 	CreateIoCompletionPort((HANDLE)(listener6), iocp_handle, 0, 0);
 
 #ifdef _WIN32
-		GUID disconnectex = WSAID_DISCONNECTEX;
-		DWORD BytesReturned;
-
-		WSAIoctl(listener6, SIO_GET_EXTENSION_FUNCTION_POINTER,
-			&disconnectex, sizeof(GUID), &DisconnectEx, sizeof(DisconnectEx),
-			&BytesReturned, 0, 0);
+	init_winsock_api_pointer();
 #endif
 	{
 		// Addr of listening socket

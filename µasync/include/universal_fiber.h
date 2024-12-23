@@ -9,7 +9,6 @@
 #include <ws2tcpip.h>
 #include <mswsock.h>
 #pragma comment(lib, "ws2_32.lib")
-#pragma comment(lib, "Mswsock.lib")
 #ifndef SOCKET_get_fd
 #define SOCKET_get_fd(x) (x)
 #endif

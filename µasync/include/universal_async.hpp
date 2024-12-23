@@ -1,9 +1,6 @@
 ﻿
 #pragma once
 
-#include "awaitable.hpp"
-#include <cstdint>
-#include <mutex>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -12,11 +9,51 @@
 #include <ws2tcpip.h>
 #include <mswsock.h>
 #pragma comment(lib, "ws2_32.lib")
-#pragma comment(lib, "Mswsock.lib")
 #else
 #include "iocp.h"
 #endif
 
+#include "awaitable.hpp"
+#include <cstdint>
+#include <mutex>
+
+#if defined(_WIN32)
+inline LPFN_CONNECTEX WSAConnectEx = nullptr;
+inline LPFN_DISCONNECTEX DisconnectEx = nullptr;
+inline LPFN_GETACCEPTEXSOCKADDRS _GetAcceptExSockaddrs = nullptr;
+inline LPFN_ACCEPTEX _AcceptEx = nullptr;
+
+#define AcceptEx _AcceptEx
+#define GetAcceptExSockaddrs _GetAcceptExSockaddrs
+
+inline void init_winsock_api_pointer()
+{
+	SOCKET sock = WSASocket(AF_INET6, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+
+	GUID disconnectex = WSAID_DISCONNECTEX;
+	GUID connect_ex_guid = WSAID_CONNECTEX;
+	GUID acceptex = WSAID_ACCEPTEX;
+    GUID getacceptexsockaddrs = WSAID_GETACCEPTEXSOCKADDRS;
+	DWORD BytesReturned;
+
+	WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
+		&disconnectex, sizeof(GUID), &DisconnectEx, sizeof(DisconnectEx),
+		&BytesReturned, 0, 0);
+
+	WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
+		&connect_ex_guid, sizeof(GUID), &WSAConnectEx, sizeof(WSAConnectEx), &BytesReturned, 0, 0);
+
+	WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
+		&acceptex, sizeof(GUID), &_AcceptEx, sizeof(_AcceptEx),
+		&BytesReturned, 0, 0);	
+
+    WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
+        &getacceptexsockaddrs, sizeof(GUID), &_GetAcceptExSockaddrs, sizeof(_GetAcceptExSockaddrs),
+        &BytesReturned, 0, 0);
+	closesocket(sock);
+}
+
+#endif // defined(_WIN32)
 
 struct awaitable_overlapped
 {

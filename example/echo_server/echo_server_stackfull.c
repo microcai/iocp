@@ -6,6 +6,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef _WIN32
+LPFN_ACCEPTEX _AcceptEx = NULL;
+LPFN_DISCONNECTEX DisconnectEx = NULL;
+
+#define AcceptEx _AcceptEx
+#endif
 
 // -----------------------------------------------------------------------------
 
@@ -205,6 +211,25 @@ static void init_winsock(void)
       printf("* error in WSAStartup!\n");
       exit(1);
    }
+
+#ifdef _WIN32
+		GUID disconnectex = WSAID_DISCONNECTEX;
+		GUID acceptex = WSAID_ACCEPTEX;
+		DWORD BytesReturned;
+
+      SOCKET dummySocket = WSASocket(AF_INET6, SOCK_STREAM, IPPROTO_TCP, 0, 0, WSA_FLAG_OVERLAPPED);
+
+		WSAIoctl(dummySocket, SIO_GET_EXTENSION_FUNCTION_POINTER,
+			&disconnectex, sizeof(GUID), &DisconnectEx, sizeof(DisconnectEx),
+			&BytesReturned, 0, 0);
+
+		WSAIoctl(dummySocket, SIO_GET_EXTENSION_FUNCTION_POINTER,
+			&acceptex, sizeof(GUID), &_AcceptEx, sizeof(_AcceptEx),
+			&BytesReturned, 0, 0);
+      closesocket(dummySocket);
+
+#endif
+
 }
 
 // -----------------------------------------------------------------------------

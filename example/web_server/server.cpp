@@ -2,6 +2,9 @@
 * In the linker options (on the project right-click, linker, input) you need add wsock32.lib or ws2_32.lib to the list of input files.
 */
 #define DISABLE_THREADS 1
+
+#include "universal_async.hpp"
+
 #include <cstdio>
 #include <iostream>
 #include <string>
@@ -10,24 +13,11 @@
 #include <array>
 #include <time.h>
 
-#include "universal_async.hpp"
-
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <mswsock.h>
-#include <winbase.h>
-
-LPFN_DISCONNECTEX DisconnectEx = nullptr;
 #define WSA_FLAG_FAKE_CREATION 0
-
 #define SOCKET_get_fd(s) (s)
 #define MSG_NOSIGNAL 0
 #define getcwd(a,b) GetCurrentDirectory(b,a)
-#else
-#include "iocp.h"
 #endif
 
 #define forever while(true)
@@ -436,14 +426,8 @@ public:
 		listenSocket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
 		if (listenSocket == INVALID_SOCKET)
 			errorHandle("socket");
-
 #ifdef _WIN32
-		GUID disconnectex = WSAID_DISCONNECTEX;
-		DWORD BytesReturned;
-
-		WSAIoctl(listenSocket, SIO_GET_EXTENSION_FUNCTION_POINTER,
-			&disconnectex, sizeof(GUID), &DisconnectEx, sizeof(DisconnectEx),
-			&BytesReturned, 0, 0);
+		init_winsock_api_pointer();
 #endif
 		if (CreateIoCompletionPort((HANDLE)listenSocket6, eventQueue, (ULONG_PTR)0, 0) == NULL)
 			errorHandle("IOCP bind socket6");

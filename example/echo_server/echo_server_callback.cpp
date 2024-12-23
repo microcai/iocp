@@ -5,7 +5,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-
 // -----------------------------------------------------------------------------
 
 enum // configuration
@@ -205,6 +204,11 @@ static void init_winsock(void)
       printf("* error in WSAStartup!\n");
       exit(1);
    }
+
+#ifdef _WIN32
+      init_winsock_api_pointer();
+#endif
+
 }
 
 // -----------------------------------------------------------------------------
