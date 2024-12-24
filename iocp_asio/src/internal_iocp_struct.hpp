@@ -202,6 +202,20 @@ struct SOCKET_emu_class final : public base_handle
 	udp_sock& udp_socket() { return std::get<udp_sock>(sock_); };
 	acceptor& accept_socket() { return std::get<acceptor>(sock_); };
 
+	auto cancel_all()
+	{
+		return std::visit([](auto& s)
+		{
+			if constexpr (!std::is_same_v<decltype(s), normal_file&>)
+			{
+				asio::error_code ignore_ec;
+				s.cancel(ignore_ec);
+				return true;
+			}
+			return false;
+		}, sock_);
+	}
+
 	template<typename Handler>
 	void async_accept(SOCKET_emu_class* into, Handler&& handler)
 	{
@@ -210,8 +224,8 @@ struct SOCKET_emu_class final : public base_handle
 		accept_sock.async_accept(into->tcp_socket(), std::forward<Handler>(handler));
 	}
 
-	template<typename Handler>
-	void async_connect(asio::ip::address addr, asio::ip::port_type port, Handler&& handler)
+	template<typename Protocal, typename Handler>
+	void async_connect(asio::ip::basic_endpoint<Protocal> endpoint, Handler&& handler)
 	{
 		assert(_iocp);
 		if (std::holds_alternative<normal_file>(sock_))
@@ -232,11 +246,11 @@ struct SOCKET_emu_class final : public base_handle
 
 		if (type == SOCK_STREAM)
 		{
-			tcp_socket().async_connect(asio::ip::tcp::endpoint{addr, port}, std::forward<Handler>(handler));
+			tcp_socket().async_connect(asio::ip::tcp::endpoint{endpoint.address(), endpoint.port()}, std::forward<Handler>(handler));
 		}
 		else if (type == SOCK_DGRAM)
 		{
-			udp_socket().async_connect(asio::ip::udp::endpoint{addr, port}, std::forward<Handler>(handler));
+			udp_socket().async_connect(asio::ip::udp::endpoint{endpoint.address(), endpoint.port()}, std::forward<Handler>(handler));
 		}
 	}
 
@@ -272,6 +286,21 @@ struct SOCKET_emu_class final : public base_handle
 		else if (type == SOCK_DGRAM)
 		{
 			udp_socket().async_receive(buf, std::forward<Handler>(handler));
+		}
+	}
+
+	template<typename Buffer, typename Protocol, typename Handler>
+	void async_receive_from(Buffer&& buf, asio::ip::basic_endpoint<Protocol>& endpoint, Handler&& handler)
+	{
+		assert(type == SOCK_DGRAM);
+
+		if (type == SOCK_DGRAM)
+		{
+			udp_socket().async_receive_from(buf, endpoint, std::forward<Handler>(handler));
+		}
+		else
+		{
+			handler(asio::error::make_error_code(asio::error::operation_not_supported), 0);
 		}
 	}
 

@@ -78,17 +78,17 @@ of what wepoll does.
 | PostQueuedCompletionStatus | ✅                       | ✅                            |
 | WSASend                    | ✅                       | ✅                            |
 | WSARecv                    | ✅                       | ✅                            |
-| WSASendTo                  | ✅                       | 实现中                     |
-| WSARecvFrom                | ✅                       | 实现中                     |
+| WSASendTo                  | ✅                       | ✅                            |
+| WSARecvFrom                | ✅                       | ✅                            |
 | AcceptEx                   | ✅                       | ✅                            |
 | WSAConnectEx               | ✅                       | ✅                            |
 | DisconnectEx               | ✅                       | ✅                            |
 | CreateFileA                | ✅                       | ✅                            |
 | CreateFileW                | ✅                       | ✅                            |
-| ReadFile                   | ✅                       | API 可用，为同步模拟             |
-| WriteFile                  | ✅                       | API 可用，为同步模拟             |
+| ReadFile                   | ✅                       | API 可用，为同步模拟         |
+| WriteFile                  | ✅                       | API 可用，为同步模拟         |
 | CloseHandle                | ✅                       | ✅                            |
-| CancelIo                   | ✅                       | 不支持                         |
+| CancelIo                   | ✅                       | ✅                            |
 | CancelIoEx                 | ✅                       | ✅                            |
 
 

@@ -158,17 +158,11 @@ IOCP_DECL BOOL WINAPI CancelIo(_In_ HANDLE hFile)
 
 	iocp_handle_emu_class* iocp = s->_iocp;
 
-	return FALSE;
+	return s->cancel_all();
 }
 
 IOCP_DECL BOOL WINAPI CancelIoEx(_In_ HANDLE  hFile, _In_opt_ LPOVERLAPPED lpOverlapped)
 {
-	// SOCKET_emu_class* s = dynamic_cast<SOCKET_emu_class*>(hFile);
-
-	// iocp_handle_emu_class* iocp = s->_iocp;
-
-	// std::scoped_lock<std::mutex> l(iocp->result_mutex);
-
 	reinterpret_cast<asio_operation*>(lpOverlapped->Internal)->cancel_signal.emit(asio::cancellation_type::partial);
 
 	return TRUE;
@@ -287,6 +281,31 @@ IOCP_DECL void GetAcceptExSockaddrs(_In_ PVOID lpOutputBuffer, _In_ DWORD dwRece
 	*RemoteSockaddr = reinterpret_cast<sockaddr*>(reinterpret_cast<char*>(lpOutputBuffer) + local_addr_length + 2);
 }
 
+template <typename Protocal>
+static asio::ip::basic_endpoint<Protocal> from_sockaddr(const sockaddr* name)
+{
+	asio::ip::address addr;
+	asio::ip::port_type port;
+
+	if ( name->sa_family == AF_INET)
+	{
+		sockaddr_in * v4addr = (sockaddr_in*) name;
+		asio::ip::address_v4::bytes_type native_sin_addr;
+		memcpy(&native_sin_addr, &(v4addr->sin_addr), 4);
+		addr = asio::ip::address_v4{native_sin_addr};
+		port = ntohs(v4addr->sin_port);
+	}
+	else if ( name->sa_family == AF_INET6)
+	{
+		sockaddr_in6 * v6addr = (sockaddr_in6*) name;
+		asio::ip::address_v6::bytes_type native_sin_addr;
+		memcpy(&native_sin_addr, &(v6addr->sin6_addr), 4);
+		addr = asio::ip::address_v6{native_sin_addr, v6addr->sin6_scope_id};
+		port = ntohs(v6addr->sin6_port);
+	}
+
+	return asio::ip::basic_endpoint<Protocal>{addr, port};
+}
 
 IOCP_DECL BOOL WSAConnectEx(
   _In_            SOCKET socket_,
@@ -328,28 +347,9 @@ IOCP_DECL BOOL WSAConnectEx(
 	op->dwSendDataLength = dwSendDataLength;
 	op->sock = s;
 
-	asio::ip::address remote_ip;
-	asio::ip::port_type remote_port;
+	asio::ip::tcp::endpoint endpoint = from_sockaddr<asio::ip::tcp>(name);
 
-
-	if ( name->sa_family == AF_INET)
-	{
-		sockaddr_in * v4addr = (sockaddr_in*) name;
-		asio::ip::address_v4::bytes_type native_sin_addr;
-		memcpy(&native_sin_addr, &(v4addr->sin_addr), 4);
-		remote_ip = asio::ip::address_v4{native_sin_addr};
-		remote_port = ntohs(v4addr->sin_port);
-	}
-	else if ( name->sa_family == AF_INET6)
-	{
-		sockaddr_in6 * v6addr = (sockaddr_in6*) name;
-		asio::ip::address_v6::bytes_type native_sin_addr;
-		memcpy(&native_sin_addr, &(v6addr->sin6_addr), 4);
-		remote_ip = asio::ip::address_v6{native_sin_addr, v6addr->sin6_scope_id};
-		remote_port = ntohs(v6addr->sin6_port);
-	}
-
-	s->async_connect(remote_ip, remote_port, asio::bind_cancellation_slot(op->cancel_signal.slot(), [op, iocp](asio::error_code ec)
+	s->async_connect(endpoint, asio::bind_cancellation_slot(op->cancel_signal.slot(), [op, iocp](asio::error_code ec)
 	{
 		op->last_error = ec.value();
 
@@ -478,7 +478,6 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 	return SOCKET_ERROR;
 }
 
-#if 0
 
 IOCP_DECL int WSASendTo(
     _In_    SOCKET                             socket_,
@@ -495,7 +494,7 @@ IOCP_DECL int WSASendTo(
 
 	if (s->_iocp == nullptr && lpOverlapped) [[unlikely]]
 	{
-		WSASetLastError(WSAEOPNOTSUPP);
+		WSASetLastError(EOPNOTSUPP);
 		return SOCKET_ERROR;
 	}
 
@@ -503,45 +502,48 @@ IOCP_DECL int WSASendTo(
 
 	assert(lpOverlapped);
 
-	*lpNumberOfBytesSent = 0;
+	lpOverlapped->InternalHigh = (ULONG_PTR) __builtin_extract_return_addr (__builtin_return_address (0));
 
-	struct io_uring_write_op : io_uring_operations
+	if (lpNumberOfBytesSent) [[likely]]
+		*lpNumberOfBytesSent = 0;
+
+	struct write_op : asio_operation
 	{
-		std::vector<iovec> msg_iov;
-		msghdr msg = {};
-		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
-		{
-			if (cqe->res < 0)
-				WSASetLastError(-cqe->res);
-		}
+		std::vector<asio::const_buffer> buffers;
 	};
 
 	// now, enter IOCP emul logic
-	io_uring_write_op* op = io_uring_operation_allocator{}.allocate<io_uring_write_op>();
+	write_op* op = new write_op;
 	op->lpCompletionRoutine = lpCompletionRoutine;
 	op->overlapped_ptr = lpOverlapped;
 	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
-	op->msg_iov.resize(dwBufferCount);
-	op->msg.msg_iovlen = dwBufferCount;
-	op->msg.msg_iov = op->msg_iov.data();
-	op->msg.msg_name = (void*) lpTo;
-	op->msg.msg_namelen = iTolen;
+
+	op->buffers.resize(dwBufferCount);
+	int64_t total_send_bytes = 0;
 	for (int i = 0; i < dwBufferCount; i++)
 	{
-		op->msg_iov[i].iov_base = lpBuffers[i].buf;
-		op->msg_iov[i].iov_len = lpBuffers[i].len;
+		op->buffers[i] = asio::buffer(lpBuffers[i].buf, lpBuffers[i].len);
+		total_send_bytes += lpBuffers[i].len;
 	}
 
-	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	asio::ip::udp::endpoint dest = from_sockaddr<asio::ip::udp>(lpTo);
+
+
+	s->async_sendto(op->buffers, dest, asio::bind_cancellation_slot(op->cancel_signal.slot(), [iocp, op](asio::error_code ec, std::size_t bytes_transfered)
 	{
-		io_uring_prep_sendmsg_zc(sqe, s->_socket_fd, &op->msg, 0);
-		io_uring_sqe_set_data(sqe, op);
-	});
+		op->last_error = ec.value();
+		op->NumberOfBytes = bytes_transfered;
+
+		std::scoped_lock<std::mutex> l(iocp->result_mutex);
+		iocp->results_.emplace_back(op);
+	}));
 
 	WSASetLastError(ERROR_IO_PENDING);
 	return SOCKET_ERROR;
 }
+
+
 
 IOCP_DECL int WSARecvFrom(
     _In_    SOCKET                             socket_,
@@ -567,51 +569,44 @@ IOCP_DECL int WSARecvFrom(
 	// *lpNumberOfBytesRecvd = 0;
 	assert(lpOverlapped);
 
-	struct io_uring_read_op : io_uring_operations
+	struct read_op : asio_operation
 	{
-		LPINT lpFromlen;
-		std::vector<iovec> msg_iov;
-		msghdr msg = {};
-		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
-		{
-			if (cqe->res < 0) [[unlikely]]
-				WSASetLastError(-cqe->res);
-			else if (cqe->res == 0) [[unlikely]]
-				WSASetLastError(ERROR_HANDLE_EOF);
-			else [[likely]]
-				* lpFromlen = msg.msg_namelen;
-		}
+		sockaddr* out_remote_addr;
+		asio::ip::udp::endpoint remote_addr;
+		std::vector<asio::mutable_buffer> buffers;
 	};
 
 	// now, enter IOCP emul logic
-	io_uring_read_op* op = io_uring_operation_allocator{}.allocate<io_uring_read_op>();
+	read_op* op = new read_op{};
+
+	op->out_remote_addr = lpFrom;
 	op->lpCompletionRoutine = lpCompletionRoutine;
 	op->overlapped_ptr = lpOverlapped;
 	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
-	op->msg_iov.resize(dwBufferCount);
-	op->msg.msg_iovlen = dwBufferCount;
-	op->msg.msg_iov = op->msg_iov.data();
-	op->msg.msg_name = lpFrom;
-	op->msg.msg_namelen = *lpFromlen;
-	op->lpFromlen = lpFromlen;
 
+	op->buffers.resize(dwBufferCount);
+	int64_t total_send_bytes = 0;
 	for (int i = 0; i < dwBufferCount; i++)
 	{
-		op->msg_iov[i].iov_base = lpBuffers[i].buf;
-		op->msg_iov[i].iov_len = lpBuffers[i].len;
+		op->buffers[i] = asio::buffer(lpBuffers[i].buf, lpBuffers[i].len);
+		total_send_bytes += lpBuffers[i].len;
 	}
 
-	iocp->submit_io([&](struct io_uring_sqe* sqe)
+	s->async_receive_from(op->buffers, op->remote_addr, asio::bind_cancellation_slot(op->cancel_signal.slot(), [iocp, op](asio::error_code ec, std::size_t bytes_transfered)
 	{
-		io_uring_prep_recvmsg(sqe, s->_socket_fd, &(op->msg), 0);
-		io_uring_sqe_set_data(sqe, op);
-	});
+		op->last_error = ec.value();
+		op->NumberOfBytes = bytes_transfered;
+
+		memcpy(op->out_remote_addr, op->remote_addr.data(), op->remote_addr.size());
+
+		std::scoped_lock<std::mutex> l(iocp->result_mutex);
+		iocp->results_.emplace_back(op);
+	}));
 
 	WSASetLastError(ERROR_IO_PENDING);
 	return SOCKET_ERROR;
 }
-#endif
 
 IOCP_DECL BOOL DisconnectEx(
   _In_ SOCKET       hSocket,
