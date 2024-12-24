@@ -3,6 +3,15 @@ project(iocp_tests)
 
 link_libraries(uasync)
 
+if (MSVC)
+    add_link_options(/NODEFAULTLIB:libucrt$<$<CONFIG:Debug>:d>.lib)
+    link_libraries(ucrt$<$<CONFIG:Debug>:d>.lib)
+endif(MSVC)
+
+if (WIN32)
+link_libraries(ws2_32.lib kernel32.lib ntdll.lib)
+endif()
+
 add_executable(echo_server_callback echo_server/echo_server_callback.cpp)
 add_executable(echo_server_stackfull echo_server/echo_server_stackfull.c)
 add_executable(echo_server_stackless echo_server/echo_server_stackless.cpp)
