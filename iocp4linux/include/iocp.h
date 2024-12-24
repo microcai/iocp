@@ -48,7 +48,7 @@ typedef const char* LPCSTR;
 typedef const wchar_t* LPCWSTR;
 
 typedef int* LPINT;
-typedef unsigned long ULONG_PTR, *PULONG_PTR, ULONG;
+typedef unsigned long ULONG_PTR, *PULONG_PTR, ULONG, *PULONG;
 typedef uint16_t WORD, *LPWORD;
 typedef uint32_t DWORD, *LPDWORD, *DWORD_PTR;
 typedef bool BOOL; // bool is from stdbool if C99 mode.
@@ -91,6 +91,12 @@ typedef struct _OVERLAPPED
 	HANDLE hEvent;
 } OVERLAPPED, *LPOVERLAPPED, WSAOVERLAPPED, *LPWSAOVERLAPPED;
 
+typedef struct _OVERLAPPED_ENTRY {
+  ULONG_PTR    lpCompletionKey;
+  LPOVERLAPPED lpOverlapped;
+  ULONG_PTR    Internal;
+  DWORD        dwNumberOfBytesTransferred;
+} OVERLAPPED_ENTRY, *LPOVERLAPPED_ENTRY;
 
 IOCP_DECL BOOL WINAPI CloseHandle(_In_ HANDLE);
 
@@ -102,6 +108,15 @@ IOCP_DECL HANDLE WINAPI CreateIoCompletionPort(_In_ HANDLE FileHandle, _In_ HAND
 IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(_In_ HANDLE CompletionPort, _Out_ LPDWORD lpNumberOfBytes,
 												_Out_ PULONG_PTR lpCompletionKey, _Out_ LPOVERLAPPED* lpOverlapped,
 												_In_ DWORD dwMilliseconds);
+
+IOCP_DECL BOOL WINAPI GetQueuedCompletionStatusEx(
+  _In_  HANDLE             CompletionPort,
+  _Out_ LPOVERLAPPED_ENTRY lpCompletionPortEntries,
+  _In_  ULONG              ulCount,
+  _Out_ PULONG             ulNumEntriesRemoved,
+  _In_  DWORD              dwMilliseconds,
+  _In_  BOOL               fAlertable
+);
 
 IOCP_DECL BOOL WINAPI PostQueuedCompletionStatus(
   _In_     HANDLE       CompletionPort,

@@ -199,6 +199,160 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 	}
 }
 
+IOCP_DECL BOOL WINAPI GetQueuedCompletionStatusEx(
+  _In_  HANDLE             CompletionPort,
+  _Out_ LPOVERLAPPED_ENTRY lpCompletionPortEntries,
+  _In_  ULONG              ulCount,
+  _Out_ PULONG             ulNumEntriesRemoved,
+  _In_  DWORD              dwMilliseconds,
+  _In_  BOOL               fAlertable)
+{
+	struct iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(CompletionPort);
+	std::vector<io_uring_cqe*> batch_cqe(ulCount);
+
+	struct __kernel_timespec ts = {.tv_sec = dwMilliseconds / 1000, .tv_nsec = dwMilliseconds % 1000 * 1000000};
+	*ulNumEntriesRemoved = 0;
+
+	assert(ulCount);
+
+	int number_of_overlapped = 0;
+
+	while(1)
+	{
+		{
+			std::scoped_lock<nullable_mutex> l(iocp->wait_mutex);
+			int io_uring_ret = 0;
+			if (dwMilliseconds == 0)
+			{
+				io_uring_ret = io_uring_peek_batch_cqe(&iocp->ring_, batch_cqe.data(), batch_cqe.size());
+				static struct __kernel_timespec min_ts = {.tv_sec = 0, .tv_nsec = 2000 };
+				if (io_uring_ret == -EAGAIN)
+				{
+					std::scoped_lock<std::mutex> ll(iocp->submit_mutex);
+					io_uring_submit(&iocp->ring_);
+					WSASetLastError(WSA_WAIT_TIMEOUT);
+					return false;
+				}
+				batch_cqe.resize(io_uring_ret);
+			}
+			else
+			{
+				io_uring_ret = io_uring_peek_batch_cqe(&iocp->ring_, batch_cqe.data(), batch_cqe.size());
+				if (io_uring_ret == - EAGAIN || io_uring_ret == 0)
+				{
+					{
+						std::scoped_lock<std::mutex> ll(iocp->submit_mutex);
+						if (io_uring_sq_ready(&iocp->ring_) > 0)
+							io_uring_submit(&iocp->ring_);
+					}
+					io_uring_ret = io_uring_wait_cqe_timeout(&iocp->ring_, batch_cqe.data(), dwMilliseconds == UINT32_MAX ? nullptr : &ts);
+					if (io_uring_ret == 0)
+					{
+						// 一定会至少返回 1 个.
+						io_uring_ret = io_uring_peek_batch_cqe(&iocp->ring_, batch_cqe.data(), batch_cqe.size());
+					}
+				}
+				batch_cqe.resize(io_uring_ret);
+			}
+
+			if (io_uring_ret < 0) [[unlikely]]
+			{
+				if (io_uring_ret == -EAGAIN && dwMilliseconds ==0) [[likely]]
+				{
+					WSASetLastError(WSA_WAIT_TIMEOUT);
+					return false;
+				}
+				else if (io_uring_ret == -EINTR) [[unlikely]]
+				{
+					continue;
+				}
+				else if (dwMilliseconds == INFINITE && io_uring_ret == -EAGAIN)
+				{
+					continue;
+				}
+				// timeout
+				WSASetLastError(WSA_WAIT_TIMEOUT);
+				return false;
+			}
+
+			if (io_uring_cq_has_overflow(&(iocp->ring_))) [[unlikely]]
+			{
+				std::cerr << "uring completion queue overflow!" << std::endl;
+				std::terminate();
+			}
+
+			// 现在，遍历 batch_cqe 容器
+			for (io_uring_cqe* cqe : batch_cqe)
+			{
+				// get LPOVERLAPPED from cqe
+				auto op = reinterpret_cast<io_uring_operation_ptr>(io_uring_cqe_get_data(cqe));
+				if (!op) [[unlikely]]
+				{
+					io_uring_cqe_seen(&iocp->ring_, cqe);
+					continue;
+					// if (dwMilliseconds == UINT32_MAX)
+					// {
+					// 	continue;
+					// }
+					// WSASetLastError(ERROR_BUSY);
+					// return false;
+				}
+
+				lpCompletionPortEntries[number_of_overlapped].dwNumberOfBytesTransferred = cqe->res;
+
+				if (cqe->flags & IORING_CQE_F_MORE) [[unlikely]]
+				{
+					op->do_complete(cqe, &(lpCompletionPortEntries[number_of_overlapped].dwNumberOfBytesTransferred));
+					io_uring_cqe_seen(&iocp->ring_, cqe);
+					continue;
+				}
+				else if (uring_unlikely(cqe->flags & IORING_CQE_F_NOTIF)) [[unlikely]]
+				{
+				}
+				else if (uring_unlikely(cqe->flags == IORING_CQE_F_USER)) [[unlikely]]
+				{
+					lpCompletionPortEntries[number_of_overlapped].lpCompletionKey = op->CompletionKey;
+					lpCompletionPortEntries[number_of_overlapped].lpOverlapped = op->overlapped_ptr;
+					op->do_complete(cqe, &(lpCompletionPortEntries[number_of_overlapped].dwNumberOfBytesTransferred));
+					op->overlapped_ptr = 0;
+					op->CompletionKey = 0;
+					io_uring_cqe_seen(&iocp->ring_, cqe);
+					number_of_overlapped ++;
+					continue;
+				}
+				else [[likely]]
+				{
+					op->do_complete(cqe, &(lpCompletionPortEntries[number_of_overlapped].dwNumberOfBytesTransferred));
+				}
+
+				lpCompletionPortEntries[number_of_overlapped].lpCompletionKey = op->CompletionKey;
+				lpCompletionPortEntries[number_of_overlapped].lpOverlapped = op->overlapped_ptr;
+				io_uring_cqe_seen(&iocp->ring_, cqe);
+				number_of_overlapped ++;
+
+				if (op->lpCompletionRoutine) [[unlikely]]
+				{
+					op->lpCompletionRoutine(cqe->res < 0 ? -cqe->res : 0, cqe->res < 0 ? 0 :cqe->res, op->overlapped_ptr);
+				}
+
+				io_uring_operation_allocator{}.deallocate(op, op->size);
+			}
+
+			if ((dwMilliseconds == UINT32_MAX) && number_of_overlapped == 0) [[likely]]
+			{
+				continue;
+			}
+
+			if (number_of_overlapped)
+			{
+				* ulNumEntriesRemoved = number_of_overlapped;
+				return true;
+			}
+		}
+	}
+}
+
+
 IOCP_DECL BOOL WINAPI PostQueuedCompletionStatus(
   _In_     HANDLE       CompletionPort,
   _In_     DWORD        dwNumberOfBytesTransferred,
