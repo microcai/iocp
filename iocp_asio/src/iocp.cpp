@@ -131,6 +131,77 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 	return true;
 }
 
+IOCP_DECL BOOL WINAPI GetQueuedCompletionStatusEx(
+  _In_  HANDLE             CompletionPort,
+  _Out_ LPOVERLAPPED_ENTRY lpCompletionPortEntries,
+  _In_  ULONG              ulCount,
+  _Out_ PULONG             ulNumEntriesRemoved,
+  _In_  DWORD              dwMilliseconds,
+  _In_  BOOL               fAlertable)
+{
+	struct iocp_handle_emu_class* iocp = dynamic_cast<iocp_handle_emu_class*>(CompletionPort);
+	*ulNumEntriesRemoved = 0;
+
+	std::vector<asio_operation_ptr> complete_result;
+
+	if ( dwMilliseconds == 0)
+	{
+		iocp->io_.poll();
+		std::scoped_lock<std::mutex> l(iocp->result_mutex);
+
+		if (iocp->results_.empty())
+		{
+			SetLastError(WSA_WAIT_TIMEOUT);
+			return false;
+		}
+		else
+		{
+			while(!iocp->results_.empty() && complete_result.size() < ulCount)
+			{
+				complete_result.push_back(std::move(iocp->results_.front()));
+				iocp->results_.pop_front();
+			}
+		}
+	}
+	else
+	{
+		std::chrono::steady_clock::time_point until = std::chrono::steady_clock::now() + std::chrono::milliseconds(dwMilliseconds);
+		std::scoped_lock<std::mutex> l(iocp->result_mutex);
+		while (iocp->results_.empty())
+		{
+			iocp->result_mutex.unlock();
+			if (dwMilliseconds == INFINITE)
+				iocp->io_.run_one();
+			else
+				iocp->io_.run_one_until(until);
+
+			while(iocp->io_.poll()){}
+
+			iocp->result_mutex.lock();
+		}
+
+		while(!iocp->results_.empty() && complete_result.size() < ulCount)
+		{
+			complete_result.push_back(std::move(iocp->results_.front()));
+			iocp->results_.pop_front();
+		}
+	}
+
+	int number_of_results = 0;
+
+	for(asio_operation_ptr& res : complete_result)
+	{
+		lpCompletionPortEntries[number_of_results].lpCompletionKey = res->CompletionKey;
+		lpCompletionPortEntries[number_of_results].lpOverlapped = res->overlapped_ptr;
+		lpCompletionPortEntries[number_of_results].dwNumberOfBytesTransferred = res->NumberOfBytes;
+		SetLastError(res->last_error);
+		number_of_results ++;
+	}
+
+	*ulNumEntriesRemoved = number_of_results;
+	return true;
+}
+
 IOCP_DECL BOOL WINAPI PostQueuedCompletionStatus(
   _In_     HANDLE       CompletionPort,
   _In_     DWORD        dwNumberOfBytesTransferred,

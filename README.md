@@ -75,7 +75,7 @@ of what wepoll does.
 | --------------------------- | ----------------------- | ---------------------------- |
 | CreateIoCompletionPort      | ✅                       | ✅                            |
 | GetQueuedCompletionStatus   | ✅                       | ✅                            |
-| GetQueuedCompletionStatusEx | ✅                       | ❎ 实现中                      |
+| GetQueuedCompletionStatusEx | ✅                       | ✅                            |
 | PostQueuedCompletionStatus  | ✅                       | ✅                            |
 | WSASend                     | ✅                       | ✅                            |
 | WSARecv                     | ✅                       | ✅                            |
