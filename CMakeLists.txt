@@ -25,7 +25,7 @@ if (NOT WIN32)
 
 endif()
 
-add_subdirectory(µasync)
+add_subdirectory(uasync)
 
 if (${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_CURRENT_SOURCE_DIR})
     add_subdirectory(example)
