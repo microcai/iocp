@@ -16,14 +16,11 @@ struct auto_sockethandle
 
 ucoro::awaitable<void> echo_sever_client_session(SOCKET client_socket)
 {
-	char buf[CON_BUFFSIZE];
+	char buf1[CON_BUFFSIZE];
 
 	auto_sockethandle auto_close(client_socket);
 
-	WSABUF wsa_buf[2] = {
-		{ .len = 38, .buf = (char*)"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n"},
-		{ .len = sizeof(buf), .buf = buf }
-	};
+	WSABUF recv_wsa = { .len = sizeof(buf1), .buf = buf1 };
 
 	DWORD flags = 0, bytes_read = 0;
 
@@ -31,7 +28,7 @@ ucoro::awaitable<void> echo_sever_client_session(SOCKET client_socket)
 
 	int result;
 
-	result = WSARecv(client_socket, &(wsa_buf[1]), 1, &bytes_read, &flags, &ov, NULL);
+	result = WSARecv(client_socket, &recv_wsa, 1, &bytes_read, &flags, &ov, NULL);
 	ov.last_error = WSAGetLastError();
 	if (!(result !=0 && ov.last_error != WSA_IO_PENDING))
 		bytes_read = co_await get_overlapped_result(ov);
@@ -41,10 +38,17 @@ ucoro::awaitable<void> echo_sever_client_session(SOCKET client_socket)
 		co_return ;
 	}
 
-	wsa_buf[1].len = bytes_read;
+   char buf2[1024];
+   int content_length_line_len = snprintf(buf2, 80, "Content-Length: %d\r\n\r\n", ov.byte_transfered);
+
+   WSABUF wsa_buf[3] = {
+      { .len = 17, .buf = (char*) "HTTP/1.1 200 OK\r\n" },
+      { .len = (size_t) content_length_line_len, .buf = buf2 },
+      { ov.byte_transfered, buf1 }
+   };
 
 	DWORD bytes_written;
-	result = WSASend(client_socket, wsa_buf, 2, &bytes_written, 0, &ov, NULL);
+	result = WSASend(client_socket, wsa_buf, 3, &bytes_written, 0, &ov, NULL);
 	ov.last_error = WSAGetLastError();
 	if (!(result !=0 && ov.last_error != WSA_IO_PENDING))
 		bytes_written = co_await get_overlapped_result(ov);

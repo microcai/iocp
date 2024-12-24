@@ -58,7 +58,7 @@ inline void init_winsock_api_pointer()
 struct awaitable_overlapped
 {
     OVERLAPPED ovl;
-    DWORD NumberOfBytes;
+    DWORD byte_transfered;
     DWORD last_error;
     std::coroutine_handle<> coro_handle;
     std::atomic_flag coro_handle_set;
@@ -83,7 +83,7 @@ struct awaitable_overlapped
     {
         ovl.Internal = ovl.InternalHigh = 0;
         ovl.hEvent = NULL;
-        NumberOfBytes = 0;
+        byte_transfered = 0;
         coro_handle_set.clear();
         coro_handle = nullptr;
     }
@@ -168,7 +168,7 @@ inline ucoro::awaitable<DWORD> get_overlapped_result(awaitable_overlapped& ov)
     co_await OverlappedAwaiter{ov};
     -- awaitable_overlapped::out_standing;
 
-    auto R = ov.NumberOfBytes;
+    auto R = ov.byte_transfered;
     WSASetLastError(ov.last_error);
     ov.reset();
     co_return R;
@@ -180,7 +180,7 @@ inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes, DWORD
     auto ov = reinterpret_cast<awaitable_overlapped*>(_ov);
 
     ov->last_error = last_error;
-    ov->NumberOfBytes = NumberOfBytes;
+    ov->byte_transfered = NumberOfBytes;
 
     if (ov->coro_handle_set.test_and_set())
     {
