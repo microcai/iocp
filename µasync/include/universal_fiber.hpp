@@ -302,9 +302,10 @@ inline void process_overlapped_event(OVERLAPPED* _ov,
 	ovl_res->completekey = complete_key;
 	ovl_res->resultOk = resultOk;
 #ifdef USE_FCONTEXT
+	auto old = __current_yield_fcontext;
 	auto coro_invoke_resume = jump_fcontext(ovl_res->resume_context, 0);
 	handle_fcontext_invoke(coro_invoke_resume);
-
+	__current_yield_fcontext = old;
 #elif defined(USE_WINFIBER)
 	LPVOID old = __current_yield_fiber;
 	__current_yield_fiber = GetCurrentFiber();
@@ -554,8 +555,10 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 
 #	if defined(USE_FCONTEXT)
 	auto new_fiber_resume_ctx = make_fcontext(&(new_fiber_ctx->func_ptr), sizeof(new_fiber_ctx->sp), __coroutine_entry_point<Args...>);
+	auto old = __current_yield_fcontext;
 	auto new_fiber_invoke_result = jump_fcontext(new_fiber_resume_ctx, new_fiber_ctx);
 	handle_fcontext_invoke(new_fiber_invoke_result);
+	__current_yield_fcontext = old;
 #	elif defined (USE_UCONTEXT)
 
 	ucontext_t self;
