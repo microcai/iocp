@@ -251,97 +251,43 @@ inline void run_event_loop(HANDLE iocp_handle)
 {
     bool quit_if_no_work = false;
 
-    struct OVERLAPPEDRESULT
-    {
-        LPOVERLAPPED op;
-        DWORD NumberOfBytes;
-        DWORD last_error;
-
-        OVERLAPPEDRESULT(OVERLAPPED* ovl, DWORD b, DWORD e)
-            : op(ovl)
-            , NumberOfBytes(b)
-            , last_error(e)
-        {}
-    };
-
     // batch size of 128
-    std::vector<OVERLAPPEDRESULT> ops;
-    ops.reserve(128);
+    std::vector<OVERLAPPED_ENTRY> ops;
 
     for (;;)
     {
         DWORD dwMilliseconds_to_wait = quit_if_no_work ? ( pending_works() ? 500 : 0 ) : INFINITE;
 
-        while (ops.size() < 128)
-        {
-            DWORD NumberOfBytes = 0;
-            ULONG_PTR ipCompletionKey = 0;
-            LPOVERLAPPED ipOverlap = nullptr;
+        ULONG Entries = 0;
 
-            // get IO status, no wait
-            ::SetLastError(0);
-            auto  result = GetQueuedCompletionStatus(
-                        iocp_handle,
-                        &NumberOfBytes,
-                        (PULONG_PTR)&ipCompletionKey,
-                        &ipOverlap,
-                        0);
-            DWORD last_error = ::GetLastError();
-            if (ipOverlap) [[likely]]
-            {
-                ops.emplace_back(ipOverlap, NumberOfBytes, last_error);
-            }
-            else if (result && (ipCompletionKey == (ULONG_PTR) iocp_handle)) [[unlikely]]
-            {
-              quit_if_no_work = true;
-            }
-            else
-            {
-                if (result == FALSE && last_error == WSA_WAIT_TIMEOUT)
-                {
-                    break;
-                }
-            }
+        ops.resize(128);
+        // get IO status, no wait
+        ::SetLastError(0);
+        auto  result = GetQueuedCompletionStatusEx(iocp_handle,
+            ops.data(), ops.size(), &Entries, dwMilliseconds_to_wait, TRUE);
+        DWORD last_error = ::GetLastError();
+        if (result == FALSE && last_error == WSA_WAIT_TIMEOUT)
+        {
+            break;
         }
 
-        if (ops.empty())
+        if (result)
+            ops.resize(Entries);
+        else
+            ops.clear();
+
+        for (OVERLAPPED_ENTRY& op : ops)
         {
-            DWORD NumberOfBytes = 0;
-            ULONG_PTR ipCompletionKey = 0;
-            LPOVERLAPPED ipOverlap = nullptr;
-
-            // get IO status, no wait
-            ::SetLastError(0);
-            auto  ok = GetQueuedCompletionStatus(
-                        iocp_handle,
-                        &NumberOfBytes,
-                        (PULONG_PTR)&ipCompletionKey,
-                        &ipOverlap,
-                        dwMilliseconds_to_wait);
-            DWORD last_error = ::GetLastError();
-
-            if (ipOverlap) [[likely]]
+            if (op.lpOverlapped) [[likely]]
             {
-                ops.emplace_back(ipOverlap, NumberOfBytes, last_error);
+              process_overlapped_event(op.lpOverlapped, op.dwNumberOfBytesTransferred, last_error);
             }
-            else if (ok && (ipCompletionKey == (ULONG_PTR) iocp_handle)) [[unlikely]]
+            else if (result && (op.lpCompletionKey == (ULONG_PTR) iocp_handle)) [[unlikely]]
             {
                 quit_if_no_work = true;
             }
-            else
-            {
-                if (last_error == WSA_WAIT_TIMEOUT)
-                    break;
-            }
         }
-        else
-        {
-            for (OVERLAPPEDRESULT& op : ops)
-            {
-                process_overlapped_event(op.op, op.NumberOfBytes, op.last_error);
-            }
-            ops.clear();
-        }
+        ops.clear();
 
         if  ( quit_if_no_work) [[unlikely]]
         {
@@ -351,7 +297,6 @@ inline void run_event_loop(HANDLE iocp_handle)
                 break;
             }
         }
-
     }
 }
 
