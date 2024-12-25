@@ -48,7 +48,7 @@ static void bind_listening_socket(SOCKET listener)
 
 static SOCKET create_accepting_socket(void)
 {
-   SOCKET acceptor = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, WSA_FLAG_OVERLAPPED);
+   SOCKET acceptor = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, WSA_FLAG_OVERLAPPED);
    if (acceptor == INVALID_SOCKET)
    {
       printf("* error creating accept socket!\n");
@@ -164,7 +164,7 @@ static void accept_coroutine(SOCKET listener, HANDLE iocp_handle)
 
 	for (;;)
 	{
-		SOCKET client_socket = WSASocket(AF_INET, SOCK_STREAM, 0, 0, 0, WSA_FLAG_OVERLAPPED);
+		SOCKET client_socket = WSASocketW(AF_INET, SOCK_STREAM, 0, 0, 0, WSA_FLAG_OVERLAPPED);
 		FiberOVERLAPPED ov = { {0}, 0 };
 		DWORD ignore = 0;
 
