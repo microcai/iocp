@@ -16,6 +16,7 @@
 #include "awaitable.hpp"
 #include <cstdint>
 #include <mutex>
+#include <array>
 
 #if defined(_WIN32)
 inline LPFN_CONNECTEX WSAConnectEx = nullptr;
@@ -175,12 +176,12 @@ inline ucoro::awaitable<DWORD> get_overlapped_result(awaitable_overlapped& ov)
 }
 
 // call this after GetQueuedCompletionStatus.
-inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes, DWORD last_error)
+inline void process_overlapped_event(const OVERLAPPED_ENTRY& ov_entry, DWORD last_error)
 {
-    auto ov = reinterpret_cast<awaitable_overlapped*>(_ov);
+    auto ov = reinterpret_cast<awaitable_overlapped*>(ov_entry.lpOverlapped);
 
     ov->last_error = last_error;
-    ov->byte_transfered = NumberOfBytes;
+    ov->byte_transfered = ov_entry.dwNumberOfBytesTransferred;
 
     if (ov->coro_handle_set.test_and_set())
     {
@@ -206,15 +207,13 @@ inline void run_event_loop(HANDLE iocp_handle)
     bool quit_if_no_work = false;
 
     // batch size of 128
-    std::vector<OVERLAPPED_ENTRY> ops;
+    std::array<OVERLAPPED_ENTRY, 128> ops;
 
     for (;;)
     {
         DWORD dwMilliseconds_to_wait = quit_if_no_work ? ( pending_works() ? 500 : 0 ) : INFINITE;
 
-        ULONG Entries = 0;
-
-        ops.resize(128);
+        ULONG Entries = ops.size();
         // get IO status, no wait
         ::SetLastError(0);
         auto  result = GetQueuedCompletionStatusEx(iocp_handle,
@@ -222,26 +221,22 @@ inline void run_event_loop(HANDLE iocp_handle)
         DWORD last_error = ::GetLastError();
         if (result == FALSE && last_error == WSA_WAIT_TIMEOUT)
         {
-            break;
+            if (!quit_if_no_work)
+                continue;
         }
 
-        if (result)
-            ops.resize(Entries);
-        else
-            ops.clear();
-
-        for (OVERLAPPED_ENTRY& op : ops)
+        for (auto i = 0; i < Entries; i++)
         {
+            auto& op = ops[i];
             if (op.lpOverlapped) [[likely]]
             {
-              process_overlapped_event(op.lpOverlapped, op.dwNumberOfBytesTransferred, last_error);
+                process_overlapped_event(op, last_error);
             }
             else if (result && (op.lpCompletionKey == (ULONG_PTR) iocp_handle)) [[unlikely]]
             {
                 quit_if_no_work = true;
             }
         }
-        ops.clear();
 
         if  ( quit_if_no_work) [[unlikely]]
         {
