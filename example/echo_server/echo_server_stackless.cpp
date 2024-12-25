@@ -43,7 +43,7 @@ ucoro::awaitable<void> echo_sever_client_session(SOCKET client_socket)
 
    WSABUF wsa_buf[3] = {
       { .len = 17, .buf = (char*) "HTTP/1.1 200 OK\r\n" },
-      { .len = (size_t) content_length_line_len, .buf = buf2 },
+      { .len = (ULONG) content_length_line_len, .buf = buf2 },
       { ov.byte_transfered, buf1 }
    };
 
@@ -65,7 +65,7 @@ ucoro::awaitable<void> accept_coro(SOCKET slisten, HANDLE iocp, int af_family)
 
 	for (;;)
 	{
-		SOCKET client_socket = WSASocket(af_family, SOCK_STREAM, 0, 0, 0, WSA_FLAG_OVERLAPPED);
+		SOCKET client_socket = WSASocketW(af_family, SOCK_STREAM, 0, 0, 0, WSA_FLAG_OVERLAPPED);
 		awaitable_overlapped ov;
 		DWORD ignore = 0;
 
