@@ -120,11 +120,11 @@ static void echo_sever_client_session(SOCKET client_sock)
    //printf("* read operation completed\n");
 
    char buf2[1024];
-   int content_length_line_len = snprintf(buf2, 80, "Content-Length: %d\r\n\r\n", ov.byte_transfered);
+   int content_length_line_len = snprintf(buf2, 80, "%d\r\n\r\n", (int) ov.byte_transfered);
 
    WSABUF wsabuf[3] = {
-      { .len = 17, .buf = (char*) "HTTP/1.1 200 OK\r\n" },
-      { .len = (size_t) content_length_line_len, .buf = buf2 },
+      { .len = 33, .buf = (char*) "HTTP/1.1 200 OK\r\nContent-Length: " },
+      { .len = (ULONG) content_length_line_len, .buf = buf2 },
       { ov.byte_transfered, buf1 }
    };
 
