@@ -60,6 +60,8 @@ inline void init_winsock_api_pointer()
 
 #if defined (USE_BOOST_CONTEXT)
 #define USE_FCONTEXT
+#elif defined (USE_ZCONTEXT)
+#define USE_ZCONTEXT 1
 #elif defined(_WIN32)
 #define USE_WINFIBER
 #elif defined(__APPLE__) && defined(__MACH__)
@@ -83,6 +85,8 @@ struct transfer_t {
 
 extern "C" transfer_t jump_fcontext( fcontext_t const to, void * vp);
 extern "C" fcontext_t make_fcontext( void * sp, std::size_t size, void (* fn)( transfer_t) );
+#elif defined(USE_ZCONTEXT)
+#include "zcontext.h"
 
 #elif defined(USE_WINFIBER)
 
@@ -97,8 +101,6 @@ extern "C" fcontext_t make_fcontext( void * sp, std::size_t size, void (* fn)( t
 #endif
 #elif defined(USE_SETJMP)
 #include <setjmp.h>
-#elif defined(USE_ZCONTEXT)
-#include "zcontext.h"
 #endif
 
 #ifdef __linux__
@@ -202,6 +204,8 @@ inline void handle_fcontext_invoke(transfer_t res)
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 #if defined(USE_FCONTEXT)
 inline thread_local fcontext_t __current_yield_fcontext;
+#elif  defined (USE_ZCONTEXT)
+inline thread_local zcontext_t* __current_yield_zctx = NULL;
 #elif defined(USE_WINFIBER)
 inline thread_local LPVOID __current_yield_fiber = NULL;
 inline thread_local LPVOID __please_delete_me = NULL;
@@ -210,8 +214,6 @@ inline thread_local ucontext_t* __current_yield_ctx = NULL;
 #elif defined (USE_SETJMP)
 inline thread_local jmp_buf __current_jump_buf;
 inline thread_local FiberContext* __please_delete_me;
-#elif  defined (USE_ZCONTEXT)
-inline thread_local zcontext_t* __current_yield_zctx = NULL;
 #endif
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
