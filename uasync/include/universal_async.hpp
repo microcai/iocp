@@ -201,52 +201,6 @@ inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes, DWORD
     }
 }
 
-#if _WIN32
-inline void run_event_loop(HANDLE iocp_handle)
-{
-    bool quit_if_no_work = false;
-
-    for (;;)
-    {
-        DWORD dwMilliseconds_to_wait = quit_if_no_work ? ( pending_works() ? 500 : 0 ) : INFINITE;
-
-        DWORD NumberOfBytes = 0;
-        ULONG_PTR ipCompletionKey = 0;
-        LPOVERLAPPED ipOverlap = nullptr;
-
-        // get IO status, no wait
-        ::SetLastError(0);
-        auto  ok = GetQueuedCompletionStatus(
-                    iocp_handle,
-                    &NumberOfBytes,
-                    (PULONG_PTR)&ipCompletionKey,
-                    &ipOverlap,
-                    dwMilliseconds_to_wait);
-        DWORD last_error = ::GetLastError();
-
-        if (ipOverlap) [[likely]]
-        {
-            process_overlapped_event(ipOverlap, NumberOfBytes, last_error);
-        }
-        else if (ok && (ipCompletionKey == (ULONG_PTR) iocp_handle)) [[unlikely]]
-        {
-            quit_if_no_work = true;
-        }
-
-        if  ( quit_if_no_work) [[unlikely]]
-        {
-            // 检查还在投递中的 IO 操作.
-            if (!pending_works())
-            {
-                break;
-            }
-        }
-
-    }
-}
-
-#else
-
 inline void run_event_loop(HANDLE iocp_handle)
 {
     bool quit_if_no_work = false;
@@ -300,7 +254,6 @@ inline void run_event_loop(HANDLE iocp_handle)
     }
 }
 
-#endif
 // 通知 loop 如果没有进行中的 IO 操作的时候，就退出循环。
 inline void exit_event_loop_when_empty(HANDLE iocp_handle)
 {
