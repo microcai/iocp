@@ -233,7 +233,6 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatusEx(
 					WSASetLastError(WSA_WAIT_TIMEOUT);
 					return false;
 				}
-				batch_cqe.resize(io_uring_ret);
 			}
 			else
 			{
@@ -252,7 +251,6 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatusEx(
 						io_uring_ret = io_uring_peek_batch_cqe(&iocp->ring_, batch_cqe.data(), batch_cqe.size());
 					}
 				}
-				batch_cqe.resize(io_uring_ret);
 			}
 
 			if (io_uring_ret < 0) [[unlikely]]
@@ -274,6 +272,8 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatusEx(
 				WSASetLastError(WSA_WAIT_TIMEOUT);
 				return false;
 			}
+
+			batch_cqe.resize(io_uring_ret);
 
 			if (io_uring_cq_has_overflow(&(iocp->ring_))) [[unlikely]]
 			{
