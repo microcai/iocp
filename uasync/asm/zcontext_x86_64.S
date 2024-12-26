@@ -1,15 +1,97 @@
 
+#ifdef _WIN32
+
+.align 16
+.global zcontext_swap
+// RCX = to save sp to
+// RDX = to load sp from
+// R8 = argument
+zcontext_swap: // void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* argument)
+// 保存非易失性寄存器
+    push %rbp
+    push %rbx
+    push %rdi
+    push %rsi
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+//  保存浮点上下文
+    sub $0xb8, %rsp
+    fnstcw  0x0(%rsp)
+    stmxcsr 0x8(%rsp)
+
+    movaps %xmm15,0x10(%rsp)
+    movaps %xmm14,0x20(%rsp)
+    movaps %xmm13,0x30(%rsp)
+    movaps %xmm12,0x40(%rsp)
+    movaps %xmm11,0x50(%rsp)
+    movaps %xmm10,0x60(%rsp)
+    movaps %xmm9, 0x70(%rsp)
+    movaps %xmm8, 0x80(%rsp)
+    movaps %xmm7, 0x90(%rsp)
+    movaps %xmm6, 0xa0(%rsp)
+
+
+//  切换栈指针
+    mov %rsp, (%rcx)
+    mov (%rdx), %rsp
+
+//  恢复浮点上下文
+    fldcw   0x0(%rsp)
+    ldmxcsr 0x8(%rsp)
+    movaps 0x10(%rsp), %xmm15
+    movaps 0x20(%rsp), %xmm14
+    movaps 0x30(%rsp), %xmm13
+    movaps 0x40(%rsp), %xmm12
+    movaps 0x50(%rsp), %xmm11
+    movaps 0x60(%rsp), %xmm10
+    movaps 0x70(%rsp), %xmm9
+    movaps 0x80(%rsp), %xmm8
+    movaps 0x90(%rsp), %xmm7
+    movaps 0xa0(%rsp), %xmm6
+
+    add $0xb8, %rsp
+//  恢复非易失性寄存器
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rsi
+    pop %rdi
+    pop %rbx
+    pop %rbp
+
+    // 返回 argument
+    mov %r8, %rax
+    retq
+
+.align 16
+.global zcontext_entry_point
+zcontext_entry_point:
+    sub $0x20, %rsp
+    lea 0x8(%rsp), %rcx
+    mov $0x8001F, %r8
+    mov %r8, %rdx
+    call _controlfp_s
+    add $0x20, %rsp
+    pop %rax
+    pop %rcx
+    call *%rax
+    call ExitProcess
+    hlt
+
+#else
+
 .align 16
 .global zcontext_swap
 // RDI = to save sp to
 // RSI = to load sp from
 // RDX = argument
 zcontext_swap: // void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* argument)
-
 // 保存非易失性寄存器
     push %rbp
     push %rbx
-    push %r10
     push %r12
     push %r13
     push %r14
@@ -32,34 +114,21 @@ zcontext_swap: // void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* ar
     pop %r14
     pop %r13
     pop %r12
-    pop %r10
     pop %rbx
     pop %rbp
 
     // 返回 argument
     mov %rdx, %rax
-    mov (%rsp), %rcx
     retq
-.align 16
-
 
 .align 16
+.global zcontext_entry_point
 zcontext_entry_point:
-    mov %r15, %rdi
-    call *%r14
+    pop %rax
+    pop %rdi
+    call *%rax
+    call _exit
     hlt
 
-.align 16
-.global zcontext_setup
-// RDI = target
-// RSI = func
-// RDX = argument
-zcontext_setup: // void zcontext_setup(zcontext_t* target, void (*func)(void*arg), void* argument)
-    movq    (%rdi), %rax
-    movq    %rdx, -64(%rax)
-    subq    $80, %rax
-    movq    %rsi, 24(%rax)
-    movq    zcontext_entry_point@GOTPCREL(%rip), %rcx;
-    movq    %rcx, 72(%rax)
-    movq    %rax, (%rdi)
-    ret
+#endif
+
