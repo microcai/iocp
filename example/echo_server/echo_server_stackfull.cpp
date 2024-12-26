@@ -82,7 +82,7 @@ static SOCKET create_listening_socket(HANDLE cpl_port)
       exit(1);
    }
 
-   if (CreateIoCompletionPort((HANDLE)listener, cpl_port, 0, 0) != cpl_port)
+   if (bind_stackfull_iocp((HANDLE)listener, cpl_port, 0, 0) != cpl_port)
    {
       int err = WSAGetLastError();
       printf("* error %d in listener\n", err);
@@ -158,9 +158,9 @@ struct accept_coro_param_pack
 
 static void accept_coroutine(SOCKET listener, HANDLE iocp_handle)
 {
-   char addr_buf[1024];
-   //SOCKET listener = ((struct accept_coro_param_pack*)param)->listener;
-   //HANDLE iocp_handle = ((struct accept_coro_param_pack*)param)->iocp_handle;
+	char addr_buf[1024];
+	//SOCKET listener = ((struct accept_coro_param_pack*)param)->listener;
+	//HANDLE iocp_handle = ((struct accept_coro_param_pack*)param)->iocp_handle;
 
 	for (;;)
 	{
@@ -172,21 +172,21 @@ static void accept_coroutine(SOCKET listener, HANDLE iocp_handle)
 		ov.last_error = WSAGetLastError();
 
 		if (!(!result && ov.last_error != WSA_IO_PENDING))
-	    {
-		    get_overlapped_result(&ov);
-		    if (ov.last_error)
-		    {
-			    closesocket(client_socket);
-			    continue;
-		    }
+		{
+			get_overlapped_result(&ov);
+			if (ov.last_error)
+			{
+			closesocket(client_socket);
+			continue;
+			}
 
-		    HANDLE read_port = CreateIoCompletionPort((HANDLE)(client_socket), iocp_handle, 0, 0);
-		    // 开新协程处理连接.
-            create_detached_coroutine(&echo_sever_client_session, client_socket);
-        }
-	    else
-	    {
-		    closesocket(client_socket);
+			bind_stackfull_iocp((HANDLE)(client_socket), iocp_handle, 0, 0);
+			// 开新协程处理连接.
+			create_detached_coroutine(&echo_sever_client_session, client_socket);
+		}
+		else
+		{
+			closesocket(client_socket);
 		}
 	}
 }

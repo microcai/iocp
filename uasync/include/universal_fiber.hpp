@@ -2,20 +2,8 @@
 #ifndef ___UNIVERSAL_FIBER__H___
 #define ___UNIVERSAL_FIBER__H___
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <mswsock.h>
-#pragma comment(lib, "ws2_32.lib")
-#ifndef SOCKET_get_fd
-#define SOCKET_get_fd(x) (x)
-#endif
-#else
-#include "iocp.h"
-#endif
 
+#include "extensable_iocp.hpp"
 
 #if defined(_WIN32)
 inline LPFN_CONNECTEX WSAConnectEx = nullptr;
@@ -45,7 +33,7 @@ inline void init_winsock_api_pointer()
 
 	WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
 		&acceptex, sizeof(GUID), &_AcceptEx, sizeof(_AcceptEx),
-		&BytesReturned, 0, 0);	
+		&BytesReturned, 0, 0);
 
     WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
         &getacceptexsockaddrs, sizeof(GUID), &_GetAcceptExSockaddrs, sizeof(_GetAcceptExSockaddrs),
@@ -118,8 +106,6 @@ extern "C" fcontext_t make_fcontext( void * sp, std::size_t size, void (* fn)( t
 #include <cstdio>
 #include <tuple>
 
-inline std::atomic_long out_standing_coroutines = 0;
-
 typedef struct FiberOVERLAPPED
 {
 	OVERLAPPED ov;
@@ -137,8 +123,6 @@ typedef struct FiberOVERLAPPED
 
 	DWORD byte_transfered;
 	DWORD last_error;
-	ULONG_PTR completekey;
-	BOOL resultOk;
 } FiberOVERLAPPED;
 
 struct HelperStack
@@ -193,7 +177,6 @@ inline void handle_fcontext_invoke(transfer_t res)
 	if (reinterpret_cast<ULONG_PTR>(res.data) & 1)
 	{
 		FiberContextAlloctor{}.deallocate(reinterpret_cast<FiberContext*>(reinterpret_cast<ULONG_PTR>(res.data) ^ 1));
-		-- out_standing_coroutines;
 	}
 	else
 	{
@@ -295,14 +278,11 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 // call this after GetQueuedCompletionStatus.
-inline void process_overlapped_event(OVERLAPPED* _ov,
-			BOOL resultOk, DWORD NumberOfBytes, ULONG_PTR complete_key, DWORD last_error)
+inline void process_stack_full_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWORD last_error)
 {
-	FiberOVERLAPPED* ovl_res = (FiberOVERLAPPED*)(_ov);
-	ovl_res->byte_transfered = NumberOfBytes;
+	FiberOVERLAPPED* ovl_res = (FiberOVERLAPPED*)(_ov->lpOverlapped);
+	ovl_res->byte_transfered = _ov->dwNumberOfBytesTransferred;
 	ovl_res->last_error = last_error;
-	ovl_res->completekey = complete_key;
-	ovl_res->resultOk = resultOk;
 #ifdef USE_FCONTEXT
 	auto old = __current_yield_fcontext;
 	auto coro_invoke_resume = jump_fcontext(ovl_res->resume_context, 0);
@@ -349,46 +329,14 @@ inline void process_overlapped_event(OVERLAPPED* _ov,
 #endif
 }
 
-inline int pending_works()
+inline auto bind_stackfull_iocp(HANDLE file, HANDLE iocp_handle, DWORD = 0, DWORD = 0)
 {
-    return out_standing_coroutines;
+    return CreateIoCompletionPort(file, iocp_handle, (ULONG_PTR) (void*) &process_stack_full_overlapped_event, 0);
 }
 
 inline void run_event_loop(HANDLE iocp_handle)
 {
-    bool quit_if_no_work = false;
-
-	for (;;)
-	{
-		DWORD NumberOfBytes = 0;
-		ULONG_PTR ipCompletionKey = 0;
-		LPOVERLAPPED ipOverlap = NULL;
-
-        DWORD dwMilliseconds_to_wait = quit_if_no_work ? ( pending_works() ? 500 : 0 ) : INFINITE;
-
-		// get IO status, no wait
-		SetLastError(0);
-		BOOL ok = GetQueuedCompletionStatus(iocp_handle, &NumberOfBytes, (PULONG_PTR)&ipCompletionKey, &ipOverlap, dwMilliseconds_to_wait);
-		DWORD last_error = GetLastError();
-
-		if (ipOverlap)[[likely]]
-		{
-			process_overlapped_event(ipOverlap, ok, NumberOfBytes, ipCompletionKey, last_error);
-		}
-		else if (ipCompletionKey == (ULONG_PTR)iocp_handle) [[unlikely]]
-		{
-            quit_if_no_work = true;
-		}
-
-		if  ( quit_if_no_work) [[unlikely]]
-        {
-            // 检查还在投递中的 IO 操作.
-            if (!pending_works())
-            {
-                break;
-            }
-        }
-	}
+	return iocp::run_event_loop(iocp_handle);
 }
 
 inline void exit_event_loop_when_empty(HANDLE iocp_handle)
@@ -475,9 +423,9 @@ static inline void WINAPI __coroutine_entry_point(LPVOID param)
 
 	SwitchToFiber(converted_param->caller_fiber);
 
+	++ ocp::pending_works;
 	std::apply(func_ptr, std::move(local_copyed_args));
-
-	-- out_standing_coroutines;
+	-- ocp::pending_works;
 	__please_delete_me = GetCurrentFiber();
 	SwitchToFiber(__current_yield_fiber);
 }
@@ -506,10 +454,10 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 	{
 		typedef void (* real_func_type)(Args...);
 		auto  real_func_ptr = reinterpret_cast<real_func_type>(ctx->func_ptr);
+		++ iocp::pending_works;
 		std::apply(real_func_ptr, std::move(*fiber_args));
+		-- iocp::pending_works;
 	}
-
-	-- out_standing_coroutines;
 
 #if defined (USE_FCONTEXT)
 	auto tagged_ptr = reinterpret_cast<ULONG_PTR>(ctx) | 1;
@@ -552,8 +500,6 @@ template<typename... Args>
 inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 {
 	using arg_tuple = std::tuple<Args...>;
-
-	++ out_standing_coroutines;
 
 	FiberContext* new_fiber_ctx = FiberContextAlloctor{}.allocate();
 	new_fiber_ctx->func_ptr = reinterpret_cast<void*>(func_ptr);
@@ -622,8 +568,6 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 {
 	using arg_tuple = std::tuple<Args...>;
 
-	++ out_standing_coroutines;
-
 	FiberContext* new_fiber_ctx = FiberContextAlloctor{}.allocate();
 	new_fiber_ctx->func_ptr = reinterpret_cast<void*>(func_ptr);
 	// placement new argument passed to function
@@ -654,8 +598,6 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 template<typename... Args>
 inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 {
-	++ out_standing_coroutines;
-
 	FiberParamPack<Args...> fiber_param{func_ptr, args...};
 	fiber_param.caller_fiber = GetCurrentFiber();
 

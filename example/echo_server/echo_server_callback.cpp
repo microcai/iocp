@@ -1,6 +1,6 @@
 // iocp_echo_server.cpp
 // -----------------------------------------------------------------------------
-#include "easy_iocp.hpp"
+#include "iocp_callback.hpp"
 #include <memory>
 
 #include <stdio.h>
@@ -85,12 +85,7 @@ static void accept_completed(DWORD last_error, DWORD length, SocketState* socket
       // associates new socket with completion port
       newSocketState = new_socket_state();
       newSocketState->socket = socketState->socket;
-      if (CreateIoCompletionPort((HANDLE)newSocketState->socket, cpl_port, 0, 0) != cpl_port)
-      {
-         int err = WSAGetLastError();
-         printf("* error %d in CreateIoCompletionPort in line %d\n", err, __LINE__);
-         exit(1);
-      }
+      bind_callback_iocp((HANDLE)newSocketState->socket, cpl_port);
 
       // starts receiving from the new connection
       start_reading(newSocketState);
@@ -165,13 +160,7 @@ static void create_listening_socket(void)
    // for use by AcceptEx
    listener_state.socket = 0; // to be updated later
 
-   if (CreateIoCompletionPort((HANDLE)listener, cpl_port,
-      (ULONG_PTR)&listener_state, 0) != cpl_port)
-   {
-      int err = WSAGetLastError();
-      printf("* error %d in listener\n", err);
-      exit(1);
-   }
+   bind_callback_iocp((HANDLE)listener, cpl_port);
 }
 
 // -----------------------------------------------------------------------------

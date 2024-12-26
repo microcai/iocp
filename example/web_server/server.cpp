@@ -138,7 +138,7 @@ struct response
 
 		auto_handle auto_close(file);
 
-		CreateIoCompletionPort(file, iocp, 0, 0);
+		bind_stackless_iocp(file, iocp, 0, 0);
 
 		WSABUF wsabuf { .len = static_cast<DWORD>(header.length()) , .buf = header.data() };
 
@@ -341,7 +341,7 @@ public:
 			}
 			else if (ov.last_error == 0)
 			{
-				CreateIoCompletionPort((HANDLE)socket, binded_event_queue, 0, 0);
+				bind_stackless_iocp((HANDLE)socket, binded_event_queue, 0, 0);
 				#ifdef _WIN32
 				sockaddr* localaddr, *remoteaddr;
 				socklen_t localaddr_len, remoteaddr_len;
@@ -429,9 +429,9 @@ public:
 #ifdef _WIN32
 		init_winsock_api_pointer();
 #endif
-		if (CreateIoCompletionPort((HANDLE)listenSocket6, eventQueue, (ULONG_PTR)0, 0) == NULL)
+		if (bind_stackless_iocp((HANDLE)listenSocket6, eventQueue, (ULONG_PTR)0, 0) == NULL)
 			errorHandle("IOCP bind socket6");
-		if (CreateIoCompletionPort((HANDLE)listenSocket, eventQueue, (ULONG_PTR)0, 0) == NULL)
+		if (bind_stackless_iocp((HANDLE)listenSocket, eventQueue, (ULONG_PTR)0, 0) == NULL)
 			errorHandle("IOCP bind socket");
 
 		int v = 1;

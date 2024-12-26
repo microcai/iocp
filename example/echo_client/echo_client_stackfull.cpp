@@ -21,7 +21,7 @@ static void echo_client(HANDLE iocp_handle, const char* lp_server_addr)
 
 	auto_sockethandle auto_close(sock);
 
-	CreateIoCompletionPort((HANDLE)(sock), iocp_handle, 0, 0);
+	bind_stackfull_iocp((HANDLE)(sock), iocp_handle, 0, 0);
 
 	SOCKADDR_IN server_addr;
 	memset(&server_addr, 0, sizeof(server_addr));

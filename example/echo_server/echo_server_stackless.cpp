@@ -81,7 +81,7 @@ ucoro::awaitable<void> accept_coro(SOCKET slisten, HANDLE iocp, int af_family)
 				continue;
 			}
 
-			HANDLE read_port = CreateIoCompletionPort((HANDLE)(client_socket), iocp, 0, 0);
+			bind_stackless_iocp((HANDLE)(client_socket), iocp);
 			// 开新协程处理连接.
 			echo_sever_client_session(client_socket).detach();
 		}
@@ -117,7 +117,7 @@ int main()
 		printf("Socket creation failed: %d\n", WSAGetLastError());
 	}
 
-	CreateIoCompletionPort((HANDLE)(listener6), iocp_handle, 0, 0);
+	bind_stackless_iocp((HANDLE)(listener6), iocp_handle);
 
 #ifdef _WIN32
 	init_winsock_api_pointer();

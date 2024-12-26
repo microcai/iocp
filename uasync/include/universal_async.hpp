@@ -1,17 +1,7 @@
 ﻿
 #pragma once
 
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <mswsock.h>
-#pragma comment(lib, "ws2_32.lib")
-#else
-#include "iocp.h"
-#endif
+#include "extensable_iocp.hpp"
 
 #include "awaitable.hpp"
 #include <cstdint>
@@ -46,7 +36,7 @@ inline void init_winsock_api_pointer()
 
 	WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
 		&acceptex, sizeof(GUID), &_AcceptEx, sizeof(_AcceptEx),
-		&BytesReturned, 0, 0);	
+		&BytesReturned, 0, 0);
 
     WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
         &getacceptexsockaddrs, sizeof(GUID), &_GetAcceptExSockaddrs, sizeof(_GetAcceptExSockaddrs),
@@ -65,10 +55,6 @@ struct awaitable_overlapped
     std::atomic_flag coro_handle_set;
     std::atomic_flag ready;
     std::atomic_flag pending;
-
-    using out_standing_t = std::atomic_long;
-
-    static out_standing_t out_standing;
 
     OVERLAPPED* operator & ()
     {
@@ -118,8 +104,6 @@ struct awaitable_overlapped
     }
 };
 
-inline typename awaitable_overlapped::out_standing_t awaitable_overlapped::out_standing = 0;
-
 struct OverlappedAwaiter
 {
     OverlappedAwaiter(const OverlappedAwaiter&) = delete;
@@ -157,17 +141,12 @@ public:
     }
 };
 
-inline int pending_works()
-{
-    return awaitable_overlapped::out_standing;
-}
-
 // wait for overlapped to became complete. return NumberOfBytes
 inline ucoro::awaitable<DWORD> get_overlapped_result(awaitable_overlapped& ov)
 {
-    ++ awaitable_overlapped::out_standing;
+    ++ iocp::pending_works;
     co_await OverlappedAwaiter{ov};
-    -- awaitable_overlapped::out_standing;
+    -- iocp::pending_works;
 
     auto R = ov.byte_transfered;
     WSASetLastError(ov.last_error);
@@ -176,7 +155,7 @@ inline ucoro::awaitable<DWORD> get_overlapped_result(awaitable_overlapped& ov)
 }
 
 // call this after GetQueuedCompletionStatus.
-inline void process_overlapped_event(const OVERLAPPED_ENTRY& ov_entry, DWORD last_error)
+inline void process_awaitable_overlapped_event(const OVERLAPPED_ENTRY& ov_entry, DWORD last_error)
 {
     auto ov = reinterpret_cast<awaitable_overlapped*>(ov_entry.lpOverlapped);
 
@@ -202,51 +181,14 @@ inline void process_overlapped_event(const OVERLAPPED_ENTRY& ov_entry, DWORD las
     }
 }
 
+inline auto bind_stackless_iocp(HANDLE file, HANDLE iocp_handle, DWORD = 0, DWORD = 0)
+{
+    return CreateIoCompletionPort(file, iocp_handle, (ULONG_PTR) (void*) &process_awaitable_overlapped_event, 0);
+}
+
 inline void run_event_loop(HANDLE iocp_handle)
 {
-    bool quit_if_no_work = false;
-
-    // batch size of 128
-    std::array<OVERLAPPED_ENTRY, 128> ops;
-
-    for (;;)
-    {
-        DWORD dwMilliseconds_to_wait = quit_if_no_work ? ( pending_works() ? 500 : 0 ) : INFINITE;
-
-        ULONG Entries = ops.size();
-        // get IO status, no wait
-        ::SetLastError(0);
-        auto  result = GetQueuedCompletionStatusEx(iocp_handle,
-            ops.data(), ops.size(), &Entries, dwMilliseconds_to_wait, TRUE);
-        DWORD last_error = ::GetLastError();
-        if (result == FALSE && last_error == WSA_WAIT_TIMEOUT)
-        {
-            if (!quit_if_no_work)
-                continue;
-        }
-
-        for (auto i = 0; i < Entries; i++)
-        {
-            auto& op = ops[i];
-            if (op.lpOverlapped) [[likely]]
-            {
-                process_overlapped_event(op, last_error);
-            }
-            else if (result && (op.lpCompletionKey == (ULONG_PTR) iocp_handle)) [[unlikely]]
-            {
-                quit_if_no_work = true;
-            }
-        }
-
-        if  ( quit_if_no_work) [[unlikely]]
-        {
-            // 检查还在投递中的 IO 操作.
-            if (!pending_works())
-            {
-                break;
-            }
-        }
-    }
+    return iocp::run_event_loop(iocp_handle);
 }
 
 // 通知 loop 如果没有进行中的 IO 操作的时候，就退出循环。

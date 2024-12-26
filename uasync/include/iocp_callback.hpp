@@ -1,19 +1,7 @@
 
 #pragma once
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <mswsock.h>
-#pragma comment(lib, "ws2_32.lib")
-#ifndef SOCKET_get_fd
-#define SOCKET_get_fd(x) (x)
-#endif
-#else
-#include "iocp.h"
-#endif
+#include "extensable_iocp.hpp"
 
 #include <assert.h>
 #include <tuple>
@@ -49,31 +37,21 @@ struct iocp_callback : OVERLAPPED
 
 
 // call this after GetQueuedCompletionStatus.
-inline void process_overlapped_event(OVERLAPPED* _ov, DWORD NumberOfBytes, DWORD last_error)
+inline void process_callback_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWORD last_error)
 {
-	iocp_callback* ovl_res = (iocp_callback*)(_ov);
+	iocp_callback* ovl_res = (iocp_callback*)(_ov->lpOverlapped);
 
-    (*ovl_res)(last_error, NumberOfBytes);
+    (*ovl_res)(last_error, _ov->dwNumberOfBytesTransferred);
+}
+
+inline void bind_callback_iocp(HANDLE file, HANDLE iocp_handle, DWORD = 0, DWORD = 0)
+{
+    CreateIoCompletionPort(file, iocp_handle, (ULONG_PTR) (void*) &process_callback_overlapped_event, 0);
 }
 
 inline void run_event_loop(HANDLE iocp_handle)
 {
-	for (;;)
-	{
-		DWORD NumberOfBytes = 0;
-		ULONG_PTR ipCompletionKey = 0;
-		LPOVERLAPPED ipOverlap = NULL;
-
-		// get IO status, no wait
-		SetLastError(0);
-		BOOL ok = GetQueuedCompletionStatus(iocp_handle, &NumberOfBytes, (PULONG_PTR)&ipCompletionKey, &ipOverlap, INFINITE);
-		DWORD last_error = GetLastError();
-
-		if (ipOverlap)
-		{
-			process_overlapped_event(ipOverlap, NumberOfBytes, last_error);
-		}
-	}
+	return iocp::run_event_loop(iocp_handle);
 }
 
 #if defined(_WIN32)
@@ -104,7 +82,7 @@ inline void init_winsock_api_pointer()
 
 	WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
 		&acceptex, sizeof(GUID), &_AcceptEx, sizeof(_AcceptEx),
-		&BytesReturned, 0, 0);	
+		&BytesReturned, 0, 0);
 
     WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
         &getacceptexsockaddrs, sizeof(GUID), &_GetAcceptExSockaddrs, sizeof(_GetAcceptExSockaddrs),
