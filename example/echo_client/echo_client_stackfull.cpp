@@ -35,8 +35,8 @@ static void echo_client(HANDLE iocp_handle, const char* lp_server_addr)
 
 	float c = ov.last_error + 1;
 
-	c*=99;
 	printf("c = %f before\n", c);
+	c*=99;
 
 	ov.last_error = WSAGetLastError();
 
@@ -47,12 +47,13 @@ static void echo_client(HANDLE iocp_handle, const char* lp_server_addr)
 
 	c /= 99;
 
-	printf("c = %f\n", c);
+	printf("c = %f after\n", c);
 
 	if (ov.last_error)
 	{
 		printf("connection failed\n");
-		exit(1);
+		exit_event_loop_when_empty(iocp_handle);
+		return;
 	}
 
 	// 发送 hello
@@ -107,9 +108,9 @@ int main(int argc, char* argv[])
 	cc *= argc;
 	printf("cc = %f before\n", cc);
 	create_detached_coroutine(echo_client, iocp_handle, (const char*)(argc == 2 ? argv[1] : "127.0.0.1"));
-	cc *= argc;
+	cc /= argc;
 
-	printf("cc = %f\n", cc);
+	printf("cc = %f after\n", cc);
 
 	run_event_loop(iocp_handle);
 	CloseHandle(iocp_handle);
