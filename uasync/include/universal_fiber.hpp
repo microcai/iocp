@@ -404,7 +404,7 @@ inline void exit_event_loop_when_empty(HANDLE iocp_handle)
 // different stackfull implementations
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-#if defined (USE_SETJMP) || defined (USE_ZCONTEXT)
+#if defined (USE_SETJMP)
 inline void execute_on_new_stack(void* new_sp, void (*jump_target)(void*), void * param)
 {
 #if defined (__x86_64__)
