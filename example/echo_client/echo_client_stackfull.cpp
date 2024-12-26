@@ -17,7 +17,7 @@ struct auto_sockethandle
 
 static void echo_client(HANDLE iocp_handle, const char* lp_server_addr)
 {
-	SOCKET sock = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+	SOCKET sock = WSASocketW(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 
 	auto_sockethandle auto_close(sock);
 

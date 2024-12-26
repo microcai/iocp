@@ -1,8 +1,14 @@
+cmake_minimum_required(VERSION 3.30)
+project(uasync)
 
+if (CMAKE_GENERATOR MATCHES "Ninja")
+set(CMAKE_ASM_MASM_CREATE_STATIC_LIBRARY "<CMAKE_AR> /OUT:<TARGET> <LINK_FLAGS> <OBJECTS>")
+endif()
 
 option(DISABLE_BOOST_CONTEXT "disable the usa of boost.context asm" OFF)
 option(DISABLE_UCONTEXT "disable ucontext and use setjmp/longjmp" OFF)
 option(USE_ZCONTEXT "use zcontext api to do context switch" OFF)
+option(USE_SETJMP "use setjmp/longjmp api to do context switch" OFF)
 
 add_library(uasync INTERFACE)
 
@@ -16,26 +22,27 @@ endif()
 
 set_property(TARGET uasync PROPERTY CXX_STANDARD 23)
 
-
 if (DISABLE_UCONTEXT)
 target_compile_definitions(uasync INTERFACE -DDISABLE_UCONTEXT=1)
 endif()
 
 if (USE_ZCONTEXT)
-if(MSVC)
-enable_language(ASM_MASM)
-
-if (CMAKE_GENERATOR MATCHES "Ninja")
-set(CMAKE_ASM_MASM_CREATE_STATIC_LIBRARY "<CMAKE_AR> /OUT:<TARGET> <LINK_FLAGS> <OBJECTS>")
-endif()
-add_library(zcontext asm/zcontext_x86_64.asm)
-
-else()
-enable_language(ASM)
-add_library(zcontext asm/zcontext_x86_64.S)
-endif()
-target_compile_definitions(uasync INTERFACE -DUSE_ZCONTEXT=1)
-target_link_libraries(uasync INTERFACE zcontext)
+    if(MSVC)
+        enable_language(ASM_MASM)
+        add_library(zcontext asm/zcontext_x86_64.asm)
+    else()
+        enable_language(ASM)
+        add_library(zcontext asm/zcontext_x86_64.S)
+    endif()
+    target_compile_definitions(uasync INTERFACE -DUSE_ZCONTEXT=1)
+    target_link_libraries(uasync INTERFACE zcontext)
+elseif(USE_SETJMP)
+    if(MSVC)
+        enable_language(ASM_MASM)
+        add_library(switch_stack_x86_64 asm/switch_stack_x86_64.asm)
+    endif()
+    target_compile_definitions(uasync INTERFACE -DUSE_SETJMP=1)
+    target_link_libraries(uasync INTERFACE switch_stack_x86_64)
 elseif (NOT DISABLE_BOOST_CONTEXT)
     add_subdirectory(asm)
     target_compile_definitions(uasync INTERFACE -DUSE_BOOST_CONTEXT=1)

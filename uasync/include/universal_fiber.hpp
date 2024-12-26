@@ -63,10 +63,15 @@ inline void init_winsock_api_pointer()
 #elif defined (USE_ZCONTEXT)
 #define USE_ZCONTEXT 1
 #elif defined(_WIN32)
+#ifndef USE_SETJMP
 #define USE_WINFIBER
+#endif
 #elif defined(__APPLE__) && defined(__MACH__)
-// #define USE_UCONTEXT
+#if defined(DISABLE_UCONTEXT)
 #define USE_SETJMP
+#else
+#define USE_UCONTEXT
+#endif
 #elif defined(DISABLE_UCONTEXT)
 #define USE_SETJMP
 #elif !defined(USE_ZCONTEXT)
@@ -87,20 +92,20 @@ extern "C" transfer_t jump_fcontext( fcontext_t const to, void * vp);
 extern "C" fcontext_t make_fcontext( void * sp, std::size_t size, void (* fn)( transfer_t) );
 #elif defined(USE_ZCONTEXT)
 #include "zcontext.h"
-
+#elif defined(USE_SETJMP)
+#include <setjmp.h>
 #elif defined(USE_WINFIBER)
 
 #elif defined(USE_UCONTEXT)
 
-#if __APPLE__ && __MACH__
-#define _XOPEN_SOURCE 600
-	#include <sys/ucontext.h>
-	#include <ucontext.h>
-#else
-	#include <ucontext.h>
-#endif
-#elif defined(USE_SETJMP)
-#include <setjmp.h>
+	#if __APPLE__ && __MACH__
+	#define _XOPEN_SOURCE 600
+		#include <sys/ucontext.h>
+		#include <ucontext.h>
+	#else
+		#include <ucontext.h>
+	#endif
+
 #endif
 
 #ifdef __linux__
@@ -120,13 +125,12 @@ typedef struct FiberOVERLAPPED
 	OVERLAPPED ov;
 #if defined (USE_FCONTEXT)
 	fcontext_t resume_context;
-
+#elif defined (USE_SETJMP)
+	jmp_buf target_jmp;
 #elif defined(USE_WINFIBER)
 	LPVOID target_fiber;
 #elif defined (USE_UCONTEXT)
 	ucontext_t target;
-#elif defined (USE_SETJMP)
-	jmp_buf target_jmp;
 #elif defined (USE_ZCONTEXT)
 	zcontext_t target;
 #endif
@@ -206,14 +210,14 @@ inline void handle_fcontext_invoke(transfer_t res)
 inline thread_local fcontext_t __current_yield_fcontext;
 #elif  defined (USE_ZCONTEXT)
 inline thread_local zcontext_t* __current_yield_zctx = NULL;
+#elif defined (USE_SETJMP)
+inline thread_local jmp_buf __current_jump_buf;
+inline thread_local FiberContext* __please_delete_me;
 #elif defined(USE_WINFIBER)
 inline thread_local LPVOID __current_yield_fiber = NULL;
 inline thread_local LPVOID __please_delete_me = NULL;
 #elif defined (USE_UCONTEXT)
 inline thread_local ucontext_t* __current_yield_ctx = NULL;
-#elif defined (USE_SETJMP)
-inline thread_local jmp_buf __current_jump_buf;
-inline thread_local FiberContext* __please_delete_me;
 #endif
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
@@ -229,6 +233,19 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
 	assert(__current_yield_fcontext && "get_overlapped_result should be called by a Fiber!");
 
 	__current_yield_fcontext = jump_fcontext(__current_yield_fcontext, ov).fctx;
+	WSASetLastError(ov->last_error);
+	return ov->byte_transfered;
+}
+
+#elif defined (USE_SETJMP)
+
+inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
+{
+	if (!setjmp(ov->target_jmp))
+	{
+		longjmp(__current_jump_buf, 1);
+	}
+
 	WSASetLastError(ov->last_error);
 	return ov->byte_transfered;
 }
@@ -256,23 +273,6 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
 	return ov->byte_transfered;
 }
 
-#elif defined (USE_SETJMP)
-
-inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
-{
-	if (!setjmp(ov->target_jmp))
-	{
-		longjmp(__current_jump_buf, 1);
-	}
-	if (__please_delete_me)
-	{
-		FiberContextAlloctor{}.deallocate(__please_delete_me);
-		__please_delete_me = NULL;
-	}
-
-	WSASetLastError(ov->last_error);
-	return ov->byte_transfered;
-}
 #elif defined (USE_ZCONTEXT)
 
 inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
@@ -308,16 +308,6 @@ inline void process_overlapped_event(OVERLAPPED* _ov,
 	auto coro_invoke_resume = jump_fcontext(ovl_res->resume_context, 0);
 	handle_fcontext_invoke(coro_invoke_resume);
 	__current_yield_fcontext = old;
-#elif defined(USE_WINFIBER)
-	LPVOID old = __current_yield_fiber;
-	__current_yield_fiber = GetCurrentFiber();
-	SwitchToFiber(ovl_res->target_fiber);
-	__current_yield_fiber = old;
-	if (__please_delete_me)
-	{
-		DeleteFiber(__please_delete_me);
-		__please_delete_me = NULL;
-	}
 #elif defined (USE_UCONTEXT)
 	ucontext_t self;
 	ucontext_t* old = __current_yield_ctx;
@@ -344,6 +334,16 @@ inline void process_overlapped_event(OVERLAPPED* _ov,
 	if (__please_delete_me)
 	{
 		FiberContextAlloctor{}.deallocate((FiberContext*)__please_delete_me);
+		__please_delete_me = NULL;
+	}
+#elif defined(USE_WINFIBER)
+	LPVOID old = __current_yield_fiber;
+	__current_yield_fiber = GetCurrentFiber();
+	SwitchToFiber(ovl_res->target_fiber);
+	__current_yield_fiber = old;
+	if (__please_delete_me)
+	{
+		DeleteFiber(__please_delete_me);
 		__please_delete_me = NULL;
 	}
 #endif
@@ -405,13 +405,17 @@ inline void exit_event_loop_when_empty(HANDLE iocp_handle)
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 #if defined (USE_SETJMP)
-inline void execute_on_new_stack(void* new_sp, void (*jump_target)(void*), void * param)
+
+#if defined (_MSC_VER)
+extern "C" void execute_on_new_stack(void * param, void (*jump_target)(void*), void* new_sp);
+#else
+inline void execute_on_new_stack(void * param, void (*jump_target)(void*), void* new_sp)
 {
 #if defined (__x86_64__)
 	__asm (
 		"mov %0, %%rdi\n"
-		"mov %1, %%rsp\n"
-		"mov %1, %%rbp\n"
+		"lea -8(%1), %%rsp\n"
+		"mov %%rsp, %%rbp\n"
 		"call *%2\n"
 		:
 		: "r" (param), "r" (new_sp), "r" (jump_target)
@@ -442,6 +446,7 @@ inline void execute_on_new_stack(void* new_sp, void (*jump_target)(void*), void 
 
 #endif
 }
+#endif
 #endif
 
 #if defined(USE_WINFIBER)
@@ -633,7 +638,12 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 		entry_point_type entry_func = & __coroutine_entry_point<Args...>;
 		void * new_sp = new_fiber_ctx->sp_top;
 
-		execute_on_new_stack(new_sp, reinterpret_cast<void (*)(void*)>(entry_func), new_fiber_ctx);
+		execute_on_new_stack(new_fiber_ctx, reinterpret_cast<void (*)(void*)>(entry_func), new_sp);
+	}
+	if (__please_delete_me)
+	{
+		FiberContextAlloctor{}.deallocate(__please_delete_me);
+		__please_delete_me = NULL;
 	}
 }
 
