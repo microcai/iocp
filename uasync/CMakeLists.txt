@@ -22,8 +22,18 @@ target_compile_definitions(uasync INTERFACE -DDISABLE_UCONTEXT=1)
 endif()
 
 if (USE_ZCONTEXT)
+if(MSVC)
+enable_language(ASM_MASM)
+
+if (CMAKE_GENERATOR MATCHES "Ninja")
+set(CMAKE_ASM_MASM_CREATE_STATIC_LIBRARY "<CMAKE_AR> /OUT:<TARGET> <LINK_FLAGS> <OBJECTS>")
+endif()
+add_library(zcontext asm/zcontext_x86_64.asm)
+
+else()
 enable_language(ASM)
 add_library(zcontext asm/zcontext_x86_64.S)
+endif()
 target_compile_definitions(uasync INTERFACE -DUSE_ZCONTEXT=1)
 target_link_libraries(uasync INTERFACE zcontext)
 elseif (NOT DISABLE_BOOST_CONTEXT)

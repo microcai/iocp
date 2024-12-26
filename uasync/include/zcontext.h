@@ -9,8 +9,8 @@ struct zcontext_t
     void* sp;// pointer to active stack buttom
 };
 
-extern void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* argument) asm("zcontext_swap");
-extern void* zcontext_entry_point() asm("zcontext_entry_point");
+extern "C" void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* argument);
+extern "C" void* zcontext_entry_point();
 
 inline void zcontext_setup(zcontext_t* target, void (*func)(void*arg), void* argument)
 {
