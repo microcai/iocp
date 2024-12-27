@@ -14,8 +14,7 @@ using iocp::init_winsock_api_pointer;
 
 #include "awaitable.hpp"
 #include <cstdint>
-#include <mutex>
-#include <array>
+#include <thread>
 
 struct awaitable_overlapped
 {
@@ -126,12 +125,12 @@ inline ucoro::awaitable<DWORD> get_overlapped_result(awaitable_overlapped& ov)
 }
 
 // call this after GetQueuedCompletionStatus.
-inline void process_awaitable_overlapped_event(const OVERLAPPED_ENTRY& ov_entry, DWORD last_error)
+inline void process_awaitable_overlapped_event(const OVERLAPPED_ENTRY* ov_entry, DWORD last_error)
 {
-    auto ov = reinterpret_cast<awaitable_overlapped*>(ov_entry.lpOverlapped);
+    auto ov = reinterpret_cast<awaitable_overlapped*>(ov_entry->lpOverlapped);
 
     ov->last_error = last_error;
-    ov->byte_transfered = ov_entry.dwNumberOfBytesTransferred;
+    ov->byte_transfered = ov_entry->dwNumberOfBytesTransferred;
 
     if (ov->coro_handle_set.test_and_set())
     {
@@ -160,36 +159,20 @@ inline auto bind_stackless_iocp(HANDLE file, HANDLE iocp_handle, DWORD = 0, DWOR
 // 执行这个，可以保证 协程被 IOCP 线程调度. 特别是 一个线程一个 IOCP 的模式下特有用
 inline ucoro::awaitable<void> run_on_iocp_thread(HANDLE iocp_handle)
 {
-    awaitable_overlapped ov;
-    struct SwitchIOCPAwaitable
-    {
-        HANDLE iocp_handle;
+	awaitable_overlapped ov;
 
-        awaitable_overlapped& ov;
+	auto switch_thread_handler = [](const OVERLAPPED_ENTRY* _ov, DWORD last_error) -> void
+	{
+		// make sure get_overlapped_result is invoked!
+		auto ov = reinterpret_cast<awaitable_overlapped*>(_ov->lpOverlapped);
 
-        SwitchIOCPAwaitable(HANDLE iocp_handle, awaitable_overlapped& ov)
-            : iocp_handle(iocp_handle)
-            , ov(ov)
-        {
-        }
+		while( !ov->pending.test() )
+		{
+			std::this_thread::yield();
+		}
 
-        constexpr bool await_ready() noexcept
-        {
-            return false;
-        }
-
-        void await_suspend(std::coroutine_handle<> handle)
-        {
-            ov.coro_handle = handle;
-            ov.coro_handle_set.test_and_set();
-            PostQueuedCompletionStatus(iocp_handle, 0, 0, &ov);
-        }
-
-        void await_resume()
-        {
-            // coro->reset();
-        }
-    };
-
-    co_await SwitchIOCPAwaitable{iocp_handle, ov};
+		process_awaitable_overlapped_event(_ov, 0);
+	};
+	PostQueuedCompletionStatus(iocp_handle, 0, (ULONG_PTR) (void*) ( iocp::overlapped_proc_func ) switch_thread_handler, &ov);
+	co_await get_overlapped_result(ov);
 }

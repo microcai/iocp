@@ -17,6 +17,7 @@ using iocp::init_winsock_api_pointer;
 
 #include <cstdint>
 #include <cstddef>
+#include <thread>
 
 #if defined (USE_BOOST_CONTEXT)
 #define USE_FCONTEXT
@@ -410,6 +411,27 @@ inline void process_stack_full_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWO
 inline auto bind_stackfull_iocp(HANDLE file, HANDLE iocp_handle, DWORD = 0, DWORD = 0)
 {
     return CreateIoCompletionPort(file, iocp_handle, (ULONG_PTR) (void*) &process_stack_full_overlapped_event, 0);
+}
+
+// 执行这个，可以保证 协程被 IOCP 线程调度. 特别是 一个线程一个 IOCP 的模式下特有用
+inline void run_fiber_on_iocp_thread(HANDLE iocp_handle)
+{
+	FiberOVERLAPPED ov;
+
+	auto switch_thread_handler = [](const OVERLAPPED_ENTRY* _ov, DWORD last_error) -> void
+	{
+		// make sure get_overlapped_result is invoked!
+		auto ov = reinterpret_cast<FiberOVERLAPPED*>(_ov->lpOverlapped);
+
+		while( !ov->in_await_state.test() )
+		{
+			std::this_thread::yield();
+		}
+
+		process_stack_full_overlapped_event(_ov, 0);
+	};
+	PostQueuedCompletionStatus(iocp_handle, 0, (ULONG_PTR) (void*) ( iocp::overlapped_proc_func ) switch_thread_handler, &ov);
+	get_overlapped_result(ov);
 }
 
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<

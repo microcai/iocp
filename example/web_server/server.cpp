@@ -1,4 +1,4 @@
-﻿/*
+/*
 * In the linker options (on the project right-click, linker, input) you need add wsock32.lib or ws2_32.lib to the list of input files.
 */
 #define DISABLE_THREADS 1
@@ -376,7 +376,7 @@ public:
 	void handle_connection(SOCKET socket, HANDLE iocp)
 	{
 #ifndef DISABLE_THREADS
-		run_on_iocp_thread(iocp);
+		run_fiber_on_iocp_thread(iocp);
 #endif
 
 		auto_sockethandle auto_close(socket);
