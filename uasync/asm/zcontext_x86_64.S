@@ -39,7 +39,7 @@ zcontext_swap: // void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* ar
 
 //  执行 hook 函数.
     test %r8, %r8
-    jne call_skip
+    je call_skip
     sub $32, %rsp
     mov %r9, %rcx
     mov %r9, %eax

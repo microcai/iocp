@@ -43,10 +43,10 @@ zcontext_swap PROC  FRAME
 
 ;  执行 hook 函数.
     test r8, r8
-    jne call_skip
+    je call_skip
     sub rsp, 32
     mov rcx, r9
-    mov eax, r9
+    mov rax, r9
     call r8
     add rsp, 32
 call_skip:
