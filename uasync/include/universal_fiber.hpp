@@ -5,43 +5,15 @@
 
 #include "extensable_iocp.hpp"
 
-#if defined(_WIN32)
-inline LPFN_CONNECTEX WSAConnectEx = nullptr;
-inline LPFN_DISCONNECTEX DisconnectEx = nullptr;
-inline LPFN_GETACCEPTEXSOCKADDRS _GetAcceptExSockaddrs = nullptr;
-inline LPFN_ACCEPTEX _AcceptEx = nullptr;
+using iocp::run_event_loop;
+using iocp::exit_event_loop_when_empty;
 
-#define AcceptEx _AcceptEx
-#define GetAcceptExSockaddrs _GetAcceptExSockaddrs
+#ifdef _WIN32
+using iocp::WSAConnectEx;
+using iocp::DisconnectEx;
+using iocp::init_winsock_api_pointer;
+#endif
 
-inline void init_winsock_api_pointer()
-{
-	SOCKET sock = WSASocket(AF_INET6, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
-
-	GUID disconnectex = WSAID_DISCONNECTEX;
-	GUID connect_ex_guid = WSAID_CONNECTEX;
-	GUID acceptex = WSAID_ACCEPTEX;
-    GUID getacceptexsockaddrs = WSAID_GETACCEPTEXSOCKADDRS;
-	DWORD BytesReturned;
-
-	WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
-		&disconnectex, sizeof(GUID), &DisconnectEx, sizeof(DisconnectEx),
-		&BytesReturned, 0, 0);
-
-	WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
-		&connect_ex_guid, sizeof(GUID), &WSAConnectEx, sizeof(WSAConnectEx), &BytesReturned, 0, 0);
-
-	WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
-		&acceptex, sizeof(GUID), &_AcceptEx, sizeof(_AcceptEx),
-		&BytesReturned, 0, 0);
-
-    WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
-        &getacceptexsockaddrs, sizeof(GUID), &_GetAcceptExSockaddrs, sizeof(_GetAcceptExSockaddrs),
-        &BytesReturned, 0, 0);
-	closesocket(sock);
-}
-
-#endif // defined(_WIN32)
 
 #include <cstdint>
 #include <cstddef>
@@ -123,6 +95,42 @@ typedef struct FiberOVERLAPPED
 
 	DWORD byte_transfered;
 	DWORD last_error;
+
+	std::atomic_bool ready;
+	std::atomic_flag in_await_state;
+
+	OVERLAPPED* operator & () { return & ov; }
+
+    void reset()
+    {
+        ov.Internal = ov.InternalHigh = 0;
+        ov.hEvent = NULL;
+        byte_transfered = 0;
+        ready = false;
+		in_await_state.clear();
+    }
+
+    void set_offset(uint64_t offset)
+    {
+        ov.Offset = offset & 0xFFFFFFFF;
+        ov.OffsetHigh = (offset >> 32);
+    }
+
+    void add_offset(uint64_t offset)
+    {
+        uint64_t cur_offset = ov.OffsetHigh;
+        cur_offset <<= 32;
+        cur_offset += ov.Offset;
+        cur_offset += offset;
+        ov.Offset = cur_offset & 0xFFFFFFFF;
+        ov.OffsetHigh = (cur_offset >> 32);
+    }
+
+	FiberOVERLAPPED()
+	{
+		reset();
+	}
+
 } FiberOVERLAPPED;
 
 struct HelperStack
@@ -211,61 +219,112 @@ inline thread_local ucontext_t* __current_yield_ctx = NULL;
 
 #if defined(USE_FCONTEXT)
 // wait for overlapped to became complete. return NumberOfBytes
-inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
+inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 {
 	assert(__current_yield_fcontext && "get_overlapped_result should be called by a Fiber!");
 
-	__current_yield_fcontext = jump_fcontext(__current_yield_fcontext, ov).fctx;
-	WSASetLastError(ov->last_error);
-	return ov->byte_transfered;
+	if (!ov.ready)
+	{
+		if (ov.in_await_state.test_and_set())
+		{
+			while(!ov.ready) { } // spin on ready
+		}
+		else
+		{
+			__current_yield_fcontext = jump_fcontext(__current_yield_fcontext, &ov).fctx;
+		}
+
+	}
+	WSASetLastError(ov.last_error);
+	return ov.byte_transfered;
 }
 
 #elif defined (USE_SETJMP)
 
-inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
+inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 {
-	if (!setjmp(ov->target_jmp))
+	if (!ov.ready)
 	{
-		longjmp(__current_jump_buf, 1);
+		if (ov.in_await_state.test_and_set())
+		{
+			while(!ov.ready) { } // spin on ready
+		}
+		else
+		{
+			if (!setjmp(ov.target_jmp))
+			{
+				longjmp(__current_jump_buf, 1);
+			}
+		}
 	}
 
-	WSASetLastError(ov->last_error);
-	return ov->byte_transfered;
+	WSASetLastError(ov.last_error);
+	return ov.byte_transfered;
 }
 
 #elif defined(USE_WINFIBER)
 
-inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
+inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 {
-	assert(__current_yield_fiber && "get_overlapped_result should be called by a Fiber!");
-	ov->target_fiber = GetCurrentFiber();
-	SwitchToFiber(__current_yield_fiber);
+	if (!ov.ready)
+	{
+		if (ov.in_await_state.test_and_set())
+		{
+			while(!ov.ready) { } // spin on ready
+		}
+		else
+		{
+			assert(__current_yield_fiber && "get_overlapped_result should be called by a Fiber!");
+			ov.target_fiber = GetCurrentFiber();
+			SwitchToFiber(__current_yield_fiber);
+		}
+	}
 
-	WSASetLastError(ov->last_error);
-	return ov->byte_transfered;
+	WSASetLastError(ov.last_error);
+	return ov.byte_transfered;
 }
 
 #elif defined (USE_UCONTEXT)
 
-inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
+inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 {
-	assert(__current_yield_ctx && "get_overlapped_result should be called by a ucontext based coroutine!");
-	swapcontext(&ov->target, __current_yield_ctx);
+	if (!ov.ready)
+	{
+		if (ov.in_await_state.test_and_set())
+		{
+			while(!ov.ready) { } // spin on ready
+		}
+		else
+		{
+			assert(__current_yield_ctx && "get_overlapped_result should be called by a ucontext based coroutine!");
+			swapcontext(&ov.target, __current_yield_ctx);
+		}
+	}
 
-	WSASetLastError(ov->last_error);
-	return ov->byte_transfered;
+	WSASetLastError(ov.last_error);
+	return ov.byte_transfered;
 }
 
 #elif defined (USE_ZCONTEXT)
 
-inline DWORD get_overlapped_result(FiberOVERLAPPED* ov)
+inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 {
-	assert(__current_yield_zctx && "get_overlapped_result should be called by a ucontext based coroutine!");
+	if (!ov.ready)
+	{
+		if (ov.in_await_state.test_and_set())
+		{
+			while(!ov.ready) { } // spin on ready
+		}
+		else
+		{
+			assert(__current_yield_zctx && "get_overlapped_result should be called by a ucontext based coroutine!");
 
-	zcontext_swap(&ov->target, __current_yield_zctx, 0);
+			zcontext_swap(&ov.target, __current_yield_zctx, 0);
+		}
+	}
 
-	WSASetLastError(ov->last_error);
-	return ov->byte_transfered;
+	WSASetLastError(ov.last_error);
+	return ov.byte_transfered;
 }
 
 #endif
@@ -283,50 +342,60 @@ inline void process_stack_full_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWO
 	FiberOVERLAPPED* ovl_res = (FiberOVERLAPPED*)(_ov->lpOverlapped);
 	ovl_res->byte_transfered = _ov->dwNumberOfBytesTransferred;
 	ovl_res->last_error = last_error;
+
+	if (ovl_res->in_await_state.test_and_set()) [[likely]]
+	{
+		ovl_res->ready = true;
+
 #ifdef USE_FCONTEXT
-	auto old = __current_yield_fcontext;
-	auto coro_invoke_resume = jump_fcontext(ovl_res->resume_context, 0);
-	handle_fcontext_invoke(coro_invoke_resume);
-	__current_yield_fcontext = old;
+		auto old = __current_yield_fcontext;
+		auto coro_invoke_resume = jump_fcontext(ovl_res->resume_context, 0);
+		handle_fcontext_invoke(coro_invoke_resume);
+		__current_yield_fcontext = old;
 #elif defined (USE_UCONTEXT)
-	ucontext_t self;
-	ucontext_t* old = __current_yield_ctx;
-	__current_yield_ctx = &self;
-	swapcontext(&self, &ovl_res->target);
-	__current_yield_ctx = old;
+		ucontext_t self;
+		ucontext_t* old = __current_yield_ctx;
+		__current_yield_ctx = &self;
+		swapcontext(&self, &ovl_res->target);
+		__current_yield_ctx = old;
 #elif defined (USE_SETJMP)
-	auto set_jmp_ret = setjmp(__current_jump_buf);
-	if (set_jmp_ret == 0)
-	{
-		longjmp(ovl_res->target_jmp, 1);
-	}
-	if (__please_delete_me)
-	{
-		FiberContextAlloctor{}.deallocate(__please_delete_me);
-		__please_delete_me = NULL;
-	}
+		auto set_jmp_ret = setjmp(__current_jump_buf);
+		if (set_jmp_ret == 0)
+		{
+			longjmp(ovl_res->target_jmp, 1);
+		}
+		if (__please_delete_me)
+		{
+			FiberContextAlloctor{}.deallocate(__please_delete_me);
+			__please_delete_me = NULL;
+		}
 #elif defined (USE_ZCONTEXT)
-	zcontext_t self;
-	zcontext_t* old = __current_yield_zctx;
-	__current_yield_zctx = &self;
-	auto __please_delete_me = zcontext_swap(&self, &ovl_res->target, 0);
-	__current_yield_zctx = old;
-	if (__please_delete_me)
-	{
-		FiberContextAlloctor{}.deallocate((FiberContext*)__please_delete_me);
-		__please_delete_me = NULL;
-	}
+		zcontext_t self;
+		zcontext_t* old = __current_yield_zctx;
+		__current_yield_zctx = &self;
+		auto __please_delete_me = zcontext_swap(&self, &ovl_res->target, 0);
+		__current_yield_zctx = old;
+		if (__please_delete_me)
+		{
+			FiberContextAlloctor{}.deallocate((FiberContext*)__please_delete_me);
+			__please_delete_me = NULL;
+		}
 #elif defined(USE_WINFIBER)
-	LPVOID old = __current_yield_fiber;
-	__current_yield_fiber = GetCurrentFiber();
-	SwitchToFiber(ovl_res->target_fiber);
-	__current_yield_fiber = old;
-	if (__please_delete_me)
-	{
-		DeleteFiber(__please_delete_me);
-		__please_delete_me = NULL;
-	}
+		LPVOID old = __current_yield_fiber;
+		__current_yield_fiber = GetCurrentFiber();
+		SwitchToFiber(ovl_res->target_fiber);
+		__current_yield_fiber = old;
+		if (__please_delete_me)
+		{
+			DeleteFiber(__please_delete_me);
+			__please_delete_me = NULL;
+		}
 #endif
+	}
+	else
+	{
+		ovl_res->ready = true;
+	}
 }
 
 inline auto bind_stackfull_iocp(HANDLE file, HANDLE iocp_handle, DWORD = 0, DWORD = 0)
@@ -334,18 +403,7 @@ inline auto bind_stackfull_iocp(HANDLE file, HANDLE iocp_handle, DWORD = 0, DWOR
     return CreateIoCompletionPort(file, iocp_handle, (ULONG_PTR) (void*) &process_stack_full_overlapped_event, 0);
 }
 
-inline void run_event_loop(HANDLE iocp_handle)
-{
-	return iocp::run_event_loop(iocp_handle);
-}
-
-inline void exit_event_loop_when_empty(HANDLE iocp_handle)
-{
-    PostQueuedCompletionStatus(iocp_handle, 0, (ULONG_PTR) iocp_handle, NULL);
-}
-
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-
 
 
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -617,6 +675,31 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 
 #endif // USE_WINFIBER
 
+template<typename Callable>
+inline void create_detached_coroutine(Callable&& callable)
+{
+	auto callable_func_wrapper = [](Callable&& callable)
+	{
+		std::forward<Callable>(callable)();
+	};
+
+	typedef void (*lambada_converted_ptr)(Callable callable);
+
+	create_detached_coroutine(static_cast<lambada_converted_ptr>(callable_func_wrapper), std::forward<Callable>(callable));
+}
+
+template<typename Class, typename... Args>
+inline void create_detached_coroutine(void (Class::*mem_func_ptr)(Args...), Class* _this, Args... args)
+{
+	auto member_func_to_func_wrapper = [](Class* _this, void (Class::*mem_func_ptr)(Args...),  Args... args)
+	{
+		(_this->*mem_func_ptr)(std::forward<Args>(args)...);
+	};
+
+	typedef void (*lambada_converted_ptr)(Class* _this, void (Class::*mem_func_ptr)(Args...),  Args... args);
+
+	create_detached_coroutine(static_cast<lambada_converted_ptr>(member_func_to_func_wrapper), _this, mem_func_ptr, std::forward<Args>(args)...);
+}
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
 

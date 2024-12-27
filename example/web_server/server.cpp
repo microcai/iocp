@@ -4,6 +4,7 @@
 #define DISABLE_THREADS 1
 
 #include "universal_async.hpp"
+#include "universal_fiber.hpp"
 
 #include <cstdio>
 #include <iostream>
@@ -299,16 +300,16 @@ public:
 #ifdef DISABLE_THREADS
 		for (int i=0; i < 32; i++)
 		{
-			start_accept(listenSocket6, AF_INET6, eventQueue).detach();
-			start_accept(listenSocket, AF_INET, eventQueue).detach();
+			create_detached_coroutine(&httpServer::start_accept, this, listenSocket6, AF_INET6, eventQueue);
+			create_detached_coroutine(&httpServer::start_accept, this, listenSocket, AF_INET, eventQueue);
 		}
 #else
 		int batch = 8 * eventQueues.size();
 
 		for (int i=0; i < batch; i++)
 		{
-			start_accept(listenSocket6, AF_INET6, eventQueues[i % eventQueues.size()]).detach();
-			start_accept(listenSocket, AF_INET, eventQueues[i % eventQueues.size()]).detach();
+			create_detached_coroutine(&httpServer::start_accept, this, listenSocket6, AF_INET6, eventQueues[i % eventQueues.size());
+			create_detached_coroutine(&httpServer::start_accept, this, listenSocket, AF_INET, eventQueues[i % eventQueues.size());
 		}
 
 		for (int i=0; i < eventQueues.size(); i++)
@@ -319,20 +320,20 @@ public:
 		run_event_loop(eventQueue);
 	}
 
-	ucoro::awaitable<int> start_accept(SOCKET listen_sock, int family, HANDLE binded_event_queue)
+	void start_accept(SOCKET listen_sock, int family, HANDLE binded_event_queue)
 	{
 		for (;;)
 		{
 			// 注意 这个 WSA_FLAG_FAKE_CREATION
 			// 记得在 win 上给 定义为 0
 			SOCKET socket = WSASocket(family, SOCK_STREAM , IPPROTO_TCP, 0 , 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_FAKE_CREATION);
-			awaitable_overlapped ov;
+			FiberOVERLAPPED ov;
 			char outputbuffer[128];
 			DWORD accepted_size = 0;
 			auto result = AcceptEx(listen_sock, socket, outputbuffer, 0,sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &accepted_size, &ov);
 			ov.last_error = WSAGetLastError();
 			if (!(!result && ov.last_error != WSA_IO_PENDING))
-				accepted_size = co_await get_overlapped_result(ov);
+				accepted_size = get_overlapped_result(ov);
 
 			if (ov.last_error == WSAECANCELLED || ov.last_error == ERROR_OPERATION_ABORTED || ov.last_error == ERROR_NETNAME_DELETED)
 			{
@@ -356,7 +357,6 @@ public:
 				printf("over error\n");
 			}
 		}
-		co_return 1;
 	}
 
 	ucoro::awaitable<void> handle_connection(SOCKET socket, HANDLE iocp)
@@ -429,9 +429,9 @@ public:
 #ifdef _WIN32
 		init_winsock_api_pointer();
 #endif
-		if (bind_stackless_iocp((HANDLE)listenSocket6, eventQueue, (ULONG_PTR)0, 0) == NULL)
+		if (bind_stackfull_iocp((HANDLE)listenSocket6, eventQueue, (ULONG_PTR)0, 0) == NULL)
 			errorHandle("IOCP bind socket6");
-		if (bind_stackless_iocp((HANDLE)listenSocket, eventQueue, (ULONG_PTR)0, 0) == NULL)
+		if (bind_stackfull_iocp((HANDLE)listenSocket, eventQueue, (ULONG_PTR)0, 0) == NULL)
 			errorHandle("IOCP bind socket");
 
 		int v = 1;

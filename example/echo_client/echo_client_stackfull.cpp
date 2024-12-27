@@ -42,7 +42,7 @@ static void echo_client(HANDLE iocp_handle, const char* lp_server_addr)
 
 	if (!(!result && ov.last_error != WSA_IO_PENDING))
 	{
-		get_overlapped_result(&ov);
+		get_overlapped_result(ov);
 	}
 
 	c /= 99;
@@ -65,7 +65,7 @@ static void echo_client(HANDLE iocp_handle, const char* lp_server_addr)
 	ov.last_error = WSAGetLastError();
 	if (!(!result && ov.last_error != WSA_IO_PENDING))
 	{
-		sent = get_overlapped_result(&ov);
+		sent = get_overlapped_result(ov);
 	}
 
 	DWORD read_bytes = 0, ignore = 0;
@@ -78,7 +78,7 @@ static void echo_client(HANDLE iocp_handle, const char* lp_server_addr)
 	ov.last_error = WSAGetLastError();
 	if (!(!result && ov.last_error != WSA_IO_PENDING))
 	{
-		read_bytes = get_overlapped_result(&ov);
+		read_bytes = get_overlapped_result(ov);
 	}
 
 	printf("%d bytes readed from server\n", read_bytes);

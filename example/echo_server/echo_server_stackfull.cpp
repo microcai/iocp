@@ -116,7 +116,7 @@ static void echo_sever_client_session(SOCKET client_sock)
       }
    }
 
-   recv_bytes = get_overlapped_result(&ov);
+   recv_bytes = get_overlapped_result(ov);
    //printf("* read operation completed\n");
 
    char buf2[1024];
@@ -141,7 +141,7 @@ static void echo_sever_client_session(SOCKET client_sock)
       }
    }
 
-   get_overlapped_result(&ov);
+   get_overlapped_result(ov);
    //printf("* write operation completed\n");
 
    closesocket(client_sock);
@@ -165,15 +165,15 @@ static void accept_coroutine(SOCKET listener, HANDLE iocp_handle)
 	for (;;)
 	{
 		SOCKET client_socket = WSASocketW(AF_INET, SOCK_STREAM, 0, 0, 0, WSA_FLAG_OVERLAPPED);
-		FiberOVERLAPPED ov = { {0}, 0 };
-		DWORD ignore = 0;
+		FiberOVERLAPPED ov;
+      DWORD ignore = 0;
 
 		BOOL result = AcceptEx(listener, client_socket, addr_buf, 0, sizeof (SOCKADDR_IN)+16, sizeof (SOCKADDR_IN)+16, &ignore, &ov.ov);
 		ov.last_error = WSAGetLastError();
 
 		if (!(!result && ov.last_error != WSA_IO_PENDING))
 		{
-			get_overlapped_result(&ov);
+			get_overlapped_result(ov);
 			if (ov.last_error)
 			{
 			closesocket(client_socket);
