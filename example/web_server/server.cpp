@@ -146,18 +146,26 @@ struct response
 
 		auto file_length = std::format("{}", file_size);
 
-		string header = "HTTP/1.1 200 OK\r\nContent-Type: " + getContentType(route) + "\r\nConnection: close\r\nContent-length: " + file_length + "\r\n\r\n";
+		auto content_type = getContentType(route);
 
-		WSABUF wsabuf { .len = static_cast<DWORD>(header.length()) , .buf = header.data() };
+		WSABUF wsabuf[]= {
+			{.len = 31, .buf = (char*) "HTTP/1.1 200 OK\r\nContent-Type: " },
+			{.len = (ULONG) content_type.length(), .buf = content_type.data() },
+			{.len = 37, .buf = (char*) "\r\nConnection: close\r\nContent-length: "},
+			{.len = (ULONG) file_length.length(), .buf = file_length.data() },
+			{.len = 4, .buf = (char*) "\r\n\r\n" },
+		};
 
 		FiberOVERLAPPED ov;
 
-		sendResult = WSASend(socket, &wsabuf, 1, 0, 0, &ov, NULL);
+		sendResult = WSASend(socket, wsabuf, 5, 0, 0, &ov, NULL);
 		ov.last_error = WSAGetLastError();
 
 	    if (sendResult != 0 && ov.last_error != WSA_IO_PENDING)
 		{
-			// printf("Error sending header, reconnecting...\n");
+			#ifdef _DEBUG
+			printf("Error sending header, reconnecting...\n");
+			#endif
 			return -1;
 		}
 
@@ -213,10 +221,6 @@ struct response
 					// 协程后，&file_ov 已经被系统 API给引用，防止野指针问题.
 					back_readLength = get_overlapped_result(file_ov);
 					// 现在，可以安全的执行 co_return -1 退出协程了.
-				}
-				else
-				{
-					printf("ReadFile success without overlapping\n");
 				}
 				#ifdef _DEBUG
 				printf("Error sending body, canceled FILE read...\n");
