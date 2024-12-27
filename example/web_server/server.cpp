@@ -108,24 +108,24 @@ struct response
 		GetRouters.push_back("/getFile/");
 	}
 
-	ucoro::awaitable<void> runGetRoute(SOCKET& socket, string route) {
+	void runGetRoute(SOCKET& socket, string route) {
 		for (auto i : GetRouters) {
 			if (0 == route.find(i)) {
 				matchStr = i;
 				goto routers;
 			}
 		}
-		co_await notFound(socket);
-		co_return;
+		notFound(socket);
+		return;
 	routers:
 		if (matchStr == "/getFile/")
-			co_await getFile(socket, route);
+			getFile(socket, route);
 		else
-			co_await notFound(socket);
+			notFound(socket);
 	}
 
 	string matchStr;
-	ucoro::awaitable<int> getFile(SOCKET& socket, string& route) {
+	int getFile(SOCKET& socket, string& route) {
 		string header = "HTTP/1.1 200 OK\r\nContent-Type: " + getContentType(route) + "\r\nConnection: close\r\n\r\n";
 		string path = route.substr(matchStr.length(), route.length());
 		string curFilePath = getCurFilePath();
@@ -135,15 +135,15 @@ struct response
 
 		HANDLE file = CreateFile(path.c_str(), GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, INVALID_HANDLE_VALUE);
 		if (file == INVALID_HANDLE_VALUE)
-			co_return co_await notFound(socket);
+			return notFound(socket);
 
 		auto_handle auto_close(file);
 
-		bind_stackless_iocp(file, iocp, 0, 0);
+		bind_stackfull_iocp(file, iocp, 0, 0);
 
 		WSABUF wsabuf { .len = static_cast<DWORD>(header.length()) , .buf = header.data() };
 
-		awaitable_overlapped ov;
+		FiberOVERLAPPED ov;
 
 		sendResult = WSASend(socket, &wsabuf, 1, 0, 0, &ov, NULL);
 		ov.last_error = WSAGetLastError();
@@ -151,12 +151,12 @@ struct response
 	    if (sendResult != 0 && ov.last_error != WSA_IO_PENDING)
 		{
 			// printf("Error sending header, reconnecting...\n");
-			co_return -1;
+			return -1;
 		}
 
-		co_await get_overlapped_result(ov);
+		get_overlapped_result(ov);
 
-		awaitable_overlapped file_ov;
+		FiberOVERLAPPED file_ov;
 		file_ov.set_offset(0);
 
 		std::array<char[BUFFER_N], 2> buffer;
@@ -169,7 +169,7 @@ struct response
 		auto ret = ReadFile(file, pri_buf, BUFFER_N, &readLength , &file_ov);
 		file_ov.last_error = GetLastError();
 		if (!(!ret && file_ov.last_error != ERROR_IO_PENDING && file_ov.last_error != ERROR_MORE_DATA))
-			readLength = co_await get_overlapped_result(file_ov);
+			readLength = get_overlapped_result(file_ov);
 
 		while (readLength > 0)
 		{
@@ -183,13 +183,9 @@ struct response
 
 			auto result = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
 			ov.last_error = WSAGetLastError();
-  			if (result != 0 && ov.last_error != WSA_IO_PENDING)
+			if (!(result != 0 && ov.last_error != WSA_IO_PENDING))
 			{
-				co_return -1;
-			}
-			else
-			{
-				co_await get_overlapped_result(ov);
+				get_overlapped_result(ov);
 			}
 
 			if (ov.last_error)
@@ -208,50 +204,53 @@ struct response
 					// 但是不管 get_overlapped_result 返回的是啥，都已经无关紧要了
 					// 这里还要调用 get_overlapped_result 仅仅是为了避免 退出本
 					// 协程后，&file_ov 已经被系统 API给引用，防止野指针问题.
-					back_readLength = co_await get_overlapped_result(file_ov);
+					back_readLength = get_overlapped_result(file_ov);
 					// 现在，可以安全的执行 co_return -1 退出协程了.
+				}
+				else
+				{
+					printf("ReadFile success without overlapping\n");
 				}
 				#ifdef _DEBUG
 				printf("Error sending body, canceled FILE read...\n");
 				#endif
-				co_return -1;
+				return -1;
 			}
 
 			if (read_file_pending)
 			{
-				back_readLength = co_await get_overlapped_result(file_ov);
+				back_readLength = get_overlapped_result(file_ov);
 			}
 			readLength = back_readLength;
 			std::swap(pri_buf, back_buf);
-
 		};
 
 		auto disconnect_result = DisconnectEx(socket, &ov, 0, 0);
 		ov.last_error = ::WSAGetLastError();
 		if (!(!disconnect_result && ov.last_error != WSA_IO_PENDING))
-			co_await get_overlapped_result(ov);
+			get_overlapped_result(ov);
 		#ifdef _DEBUG
 		printf("file sent successfull...\n");
 		#endif
-		co_return 1;
+		return 1;
 	}
 
-	static ucoro::awaitable<int> notFound(SOCKET& socket) {
+	static int notFound(SOCKET& socket) {
 		WSABUF wsabuf { .len = sizeof(DEFAULT_ERROR_404) - 1 , .buf = (char*) DEFAULT_ERROR_404 };
 
-		awaitable_overlapped ov;
+		FiberOVERLAPPED ov;
 
 		auto result = WSASend(socket, &wsabuf, 1, 0, 0, &ov, 0);
 		ov.last_error = WSAGetLastError();
 		if (!(result != 0 && ov.last_error != WSA_IO_PENDING))
 		{
-			co_await get_overlapped_result(ov);
+			get_overlapped_result(ov);
 		}
 		else
 		{
 			printf("send successfull without await\n");
 		}
-		co_return 1;
+		return 1;
 	}
 	string getCurFilePath() {
 		char filename[1024] = { 0 };
@@ -300,40 +299,43 @@ public:
 #ifdef DISABLE_THREADS
 		for (int i=0; i < 32; i++)
 		{
-			create_detached_coroutine(&httpServer::start_accept, this, listenSocket6, AF_INET6, eventQueue);
-			create_detached_coroutine(&httpServer::start_accept, this, listenSocket, AF_INET, eventQueue);
+			start_accept(listenSocket6, AF_INET6, eventQueue).detach();
+			start_accept(listenSocket, AF_INET, eventQueue).detach();
 		}
 #else
 		int batch = 8 * eventQueues.size();
 
 		for (int i=0; i < batch; i++)
 		{
-			create_detached_coroutine(&httpServer::start_accept, this, listenSocket6, AF_INET6, eventQueues[i % eventQueues.size());
-			create_detached_coroutine(&httpServer::start_accept, this, listenSocket, AF_INET, eventQueues[i % eventQueues.size());
+			start_accept(listenSocket6, AF_INET6, eventQueues[i % eventQueues.size()]).detach();
+			start_accept(listenSocket, AF_INET, eventQueues[i % eventQueues.size()]).detach();
 		}
+#endif
+	}
 
+	void run()
+	{
+#ifndef DISABLE_THREADS
 		for (int i=0; i < eventQueues.size(); i++)
 			std::thread(&run_event_loop, eventQueues[i]).detach();
-
 #endif
-
 		run_event_loop(eventQueue);
 	}
 
-	void start_accept(SOCKET listen_sock, int family, HANDLE binded_event_queue)
+	ucoro::awaitable<int> start_accept(SOCKET listen_sock, int family, HANDLE binded_event_queue)
 	{
 		for (;;)
 		{
 			// 注意 这个 WSA_FLAG_FAKE_CREATION
 			// 记得在 win 上给 定义为 0
 			SOCKET socket = WSASocket(family, SOCK_STREAM , IPPROTO_TCP, 0 , 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_FAKE_CREATION);
-			FiberOVERLAPPED ov;
+			awaitable_overlapped ov;
 			char outputbuffer[128];
 			DWORD accepted_size = 0;
 			auto result = AcceptEx(listen_sock, socket, outputbuffer, 0,sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &accepted_size, &ov);
 			ov.last_error = WSAGetLastError();
 			if (!(!result && ov.last_error != WSA_IO_PENDING))
-				accepted_size = get_overlapped_result(ov);
+				accepted_size = co_await get_overlapped_result(ov);
 
 			if (ov.last_error == WSAECANCELLED || ov.last_error == ERROR_OPERATION_ABORTED || ov.last_error == ERROR_NETNAME_DELETED)
 			{
@@ -342,7 +344,7 @@ public:
 			}
 			else if (ov.last_error == 0)
 			{
-				bind_stackless_iocp((HANDLE)socket, binded_event_queue, 0, 0);
+				bind_stackfull_iocp((HANDLE)socket, binded_event_queue, 0, 0);
 				#ifdef _WIN32
 				sockaddr* localaddr, *remoteaddr;
 				socklen_t localaddr_len, remoteaddr_len;
@@ -350,19 +352,20 @@ public:
 				auto err = setsockopt(socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char *)&listen_sock, sizeof(listen_sock) );
 				#endif
 
-				handle_connection(socket, binded_event_queue).detach(binded_event_queue);
+				create_detached_coroutine(&httpServer::handle_connection, this, socket, binded_event_queue);
 			}
 			else
 			{
 				printf("over error\n");
 			}
 		}
+		co_return 1;
 	}
 
-	ucoro::awaitable<void> handle_connection(SOCKET socket, HANDLE iocp)
+	void handle_connection(SOCKET socket, HANDLE iocp)
 	{
 #ifndef DISABLE_THREADS
-		co_await run_on_iocp_thread(iocp);
+		run_on_iocp_thread(iocp);
 #endif
 
 		auto_sockethandle auto_close(socket);
@@ -373,31 +376,30 @@ public:
 		WSABUF wsaBuf { .len = BUFFER_N, .buf = buffer };
 
 		DWORD flags = 0;
-		awaitable_overlapped ov;
+		FiberOVERLAPPED ov;
 		DWORD recv_bytes = BUFFER_N;
  		auto result = WSARecv(socket, &wsaBuf,1, &recv_bytes, &flags, &ov, NULL);
 		ov.last_error = GetLastError();
 		if (result != 0 && ov.last_error != WSA_IO_PENDING)
 		{
-			co_return;
+			return;
 		}
 		else
 		{
-			recv_bytes = co_await get_overlapped_result(ov);
+			recv_bytes = get_overlapped_result(ov);
 		}
 
 		if (ov.last_error == 0 && recv_bytes > 10)
 		{
 			request req = request(buffer, recv_bytes);
 			if (req.requestType < 0) {
-				co_return;
+				return;
 			}
 
 			// cout << req.typeName[req.requestType] << " : " << req.filePath << endl;
-			co_await responseClient(req, socket, iocp);
+			responseClient(req, socket, iocp);
 		}
 	}
-
 
 #pragma warning(disable: 26495)
 	httpServer() {
@@ -429,9 +431,9 @@ public:
 #ifdef _WIN32
 		init_winsock_api_pointer();
 #endif
-		if (bind_stackfull_iocp((HANDLE)listenSocket6, eventQueue, (ULONG_PTR)0, 0) == NULL)
+		if (bind_stackless_iocp((HANDLE)listenSocket6, eventQueue, (ULONG_PTR)0, 0) == NULL)
 			errorHandle("IOCP bind socket6");
-		if (bind_stackfull_iocp((HANDLE)listenSocket, eventQueue, (ULONG_PTR)0, 0) == NULL)
+		if (bind_stackless_iocp((HANDLE)listenSocket, eventQueue, (ULONG_PTR)0, 0) == NULL)
 			errorHandle("IOCP bind socket");
 
 		int v = 1;
@@ -464,10 +466,10 @@ private:
 		exit(FAIL_CODE);
 	}
 
-	ucoro::awaitable<void> responseClient(request req, SOCKET& messageSocket, HANDLE iocp) {
+	void responseClient(request req, SOCKET& messageSocket, HANDLE iocp) {
 		response response{iocp};
 		if (req.requestType == req.GET)
-			co_return co_await response.runGetRoute(messageSocket, req.filePath);
+			return response.runGetRoute(messageSocket, req.filePath);
 		else if (req.requestType == req.POST)
 		{
 			// close all listen socket
@@ -483,16 +485,14 @@ private:
 			exit_event_loop_when_empty(eventQueue);
 		}
 		else
-			co_await response.runGetRoute(messageSocket, "/404");
+			response.runGetRoute(messageSocket, "/404");
 	}
 };
 
-void startServer() {
-	httpServer server;
-	server.start();
-}
-
 int main(int argc, char** argv)
 {
-	startServer();
+	httpServer server;
+	server.start();
+	server.run();
+	return 0;
 }
