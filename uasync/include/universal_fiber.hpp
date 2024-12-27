@@ -352,6 +352,11 @@ inline void process_stack_full_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWO
 		auto swap_data = zcontext_swap(&self, &ovl_res->target, 0, 0);
 		__current_yield_zctx = old;
 #elif defined(USE_WINFIBER)
+		if (!IsThreadAFiber())
+		{
+			ConvertThreadToFiber(0);
+		}
+
 		LPVOID old = __current_yield_fiber;
 		__current_yield_fiber = GetCurrentFiber();
 		SwitchToFiber(ovl_res->target_fiber);
@@ -560,8 +565,13 @@ template<typename... Args>
 inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 {
 	FiberParamPack<Args...> fiber_param{func_ptr, args...};
-	fiber_param.caller_fiber = GetCurrentFiber();
 
+	if (!IsThreadAFiber())
+	{
+		ConvertThreadToFiber(0);
+	}
+	
+	fiber_param.caller_fiber = GetCurrentFiber();
 	LPVOID new_fiber = CreateFiber(0, __coroutine_entry_point<Args...>, &fiber_param);
 
 	SwitchToFiber(new_fiber);
