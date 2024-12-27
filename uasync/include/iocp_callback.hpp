@@ -3,6 +3,15 @@
 
 #include "extensable_iocp.hpp"
 
+using iocp::run_event_loop;
+using iocp::exit_event_loop_when_empty;
+
+#ifdef _WIN32
+using iocp::WSAConnectEx;
+using iocp::DisconnectEx;
+using iocp::init_winsock_api_pointer;
+#endif
+
 #include <assert.h>
 #include <tuple>
 #include <functional>
@@ -35,7 +44,6 @@ struct iocp_callback : OVERLAPPED
 	}
 };
 
-
 // call this after GetQueuedCompletionStatus.
 inline void process_callback_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWORD last_error)
 {
@@ -48,46 +56,3 @@ inline void bind_callback_iocp(HANDLE file, HANDLE iocp_handle, DWORD = 0, DWORD
 {
     CreateIoCompletionPort(file, iocp_handle, (ULONG_PTR) (void*) &process_callback_overlapped_event, 0);
 }
-
-inline void run_event_loop(HANDLE iocp_handle)
-{
-	return iocp::run_event_loop(iocp_handle);
-}
-
-#if defined(_WIN32)
-inline LPFN_CONNECTEX WSAConnectEx = nullptr;
-inline LPFN_DISCONNECTEX DisconnectEx = nullptr;
-inline LPFN_GETACCEPTEXSOCKADDRS _GetAcceptExSockaddrs = nullptr;
-inline LPFN_ACCEPTEX _AcceptEx = nullptr;
-
-#define AcceptEx _AcceptEx
-#define GetAcceptExSockaddrs _GetAcceptExSockaddrs
-
-inline void init_winsock_api_pointer()
-{
-	SOCKET sock = WSASocket(AF_INET6, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
-
-	GUID disconnectex = WSAID_DISCONNECTEX;
-	GUID connect_ex_guid = WSAID_CONNECTEX;
-	GUID acceptex = WSAID_ACCEPTEX;
-    GUID getacceptexsockaddrs = WSAID_GETACCEPTEXSOCKADDRS;
-	DWORD BytesReturned;
-
-	WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
-		&disconnectex, sizeof(GUID), &DisconnectEx, sizeof(DisconnectEx),
-		&BytesReturned, 0, 0);
-
-	WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
-		&connect_ex_guid, sizeof(GUID), &WSAConnectEx, sizeof(WSAConnectEx), &BytesReturned, 0, 0);
-
-	WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
-		&acceptex, sizeof(GUID), &_AcceptEx, sizeof(_AcceptEx),
-		&BytesReturned, 0, 0);
-
-    WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
-        &getacceptexsockaddrs, sizeof(GUID), &_GetAcceptExSockaddrs, sizeof(_GetAcceptExSockaddrs),
-        &BytesReturned, 0, 0);
-	closesocket(sock);
-}
-
-#endif // defined(_WIN32)
