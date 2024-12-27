@@ -37,6 +37,15 @@ zcontext_swap: // void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* ar
     mov %rsp, (%rcx)
     mov (%rdx), %rsp
 
+//  执行 hook 函数.
+    test %r8, %r8
+    jne call_skip
+    sub $32, %rsp
+    mov %r9, %rcx
+    mov %r9, %eax
+    call %r8
+    add $32, %rsp
+
 //  恢复浮点上下文
     fldcw   0x0(%rsp)
     ldmxcsr 0x8(%rsp)
@@ -62,9 +71,8 @@ zcontext_swap: // void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* ar
     pop %rbx
     pop %rbp
 
-    // 返回 argument
-    mov %r8, %rax
-    retq
+    // 返回
+    ret
 
 .align 16
 .global zcontext_entry_point
@@ -87,8 +95,9 @@ zcontext_entry_point:
 .global zcontext_swap
 // RDI = to save sp to
 // RSI = to load sp from
-// RDX = argument
-zcontext_swap: // void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* argument)
+// RDX = hook_function
+// RCX = argument
+zcontext_swap: // zcontext_swap(zcontext_t* from, zcontext_t* to, swap_hook_function_t hook_function, void* argument);
 // 保存非易失性寄存器
     push %rbp
     push %rbx
@@ -97,18 +106,25 @@ zcontext_swap: // void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* ar
     push %r14
     push %r15
 //  保存浮点上下文
-    sub $16, %rsp
-    fnstcw  0(%rsp)
-    stmxcsr 8(%rsp)
+    sub $24, %rsp
+    fnstcw  8(%rsp)
+    stmxcsr 16(%rsp)
 
 //  切换栈指针
     mov %rsp, (%rdi)
     mov (%rsi), %rsp
 
+//  调用 hook_function(argument)
+    test %rdx, %rdx
+    je skip_call
+    mov %rcx, %rdi
+    mov %rcx, %rax
+    call * %rdx
+skip_call:
 //  恢复浮点上下文
-    fldcw   (%rsp)
-    ldmxcsr 8(%rsp)
-    add $16, %rsp
+    fldcw   8(%rsp)
+    ldmxcsr 16(%rsp)
+    add $24, %rsp
 //  恢复非易失性寄存器
     pop %r15
     pop %r14
@@ -117,9 +133,8 @@ zcontext_swap: // void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* ar
     pop %rbx
     pop %rbp
 
-    // 返回 argument
-    mov %rdx, %rax
-    retq
+    // 返回
+    ret
 
 .align 16
 .global zcontext_entry_point

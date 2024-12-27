@@ -81,7 +81,7 @@ static void echo_client(HANDLE iocp_handle, const char* lp_server_addr)
 		read_bytes = get_overlapped_result(ov);
 	}
 
-	printf("%d bytes readed from server\n", read_bytes);
+	printf("%d bytes readed from server\n", (int) read_bytes);
 
 	exit_event_loop_when_empty(iocp_handle);
 }

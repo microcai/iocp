@@ -6,9 +6,9 @@ EXTERN  _controlfp_s:PROC
 
 ; RCX = to save sp to
 ; RDX = to load sp from
-; R8 = argument
-
-; void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* argument)
+; R8 = hook_function
+; R9 = argument
+; zcontext_swap(zcontext_t* from, zcontext_t* to, swap_hook_function_t hook_function, void* argument);
 zcontext_swap PROC  FRAME
     .endprolog
 
@@ -41,6 +41,15 @@ zcontext_swap PROC  FRAME
     mov [rcx], rsp
     mov rsp, [rdx]
 
+;  执行 hook 函数.
+    test r8, r8
+    jne call_skip
+    sub rsp, 32
+    mov rcx, r9
+    mov eax, r9
+    call r8
+    add rsp, 32
+call_skip:
 ;  恢复浮点上下文
     fldcw   [rsp]
     ldmxcsr [rsp + 8]
@@ -56,7 +65,7 @@ zcontext_swap PROC  FRAME
     movaps xmm6,  [ rsp + 0a0h ]
 
     add rsp, 0b8h
-    
+
     ; 恢复非易失性寄存器
     pop r15
     pop r14
@@ -68,7 +77,6 @@ zcontext_swap PROC  FRAME
     pop rbp
 
     ; 返回 argument
-    mov rax, r8
     ret
 zcontext_swap ENDP
 

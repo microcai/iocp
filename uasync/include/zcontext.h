@@ -9,7 +9,14 @@ struct zcontext_t
     void* sp;// pointer to active stack buttom
 };
 
-extern "C" void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* argument);
+typedef void* (*zcontext_swap_hook_function_t)(void*) ;
+
+// struct zcontext_transfer{
+// 	swap_hook_function_t swap_hook_function;
+// 	void* arg2;
+// };
+
+extern "C" void* zcontext_swap(zcontext_t* from, zcontext_t* to, zcontext_swap_hook_function_t hook_function, void* argument);
 extern "C" void* zcontext_entry_point();
 
 inline void zcontext_setup(zcontext_t* target, void (*func)(void*arg), void* argument)
@@ -23,6 +30,7 @@ inline void zcontext_setup(zcontext_t* target, void (*func)(void*arg), void* arg
         void* pad;
         void* general_reg[8];
 #else
+        void* padding;
         void* fc_x87_cw;
         void* fc_mxcsr;
         void* general_reg[6];
