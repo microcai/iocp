@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 #include <thread>
+#include <filesystem>
+#include <format>
 #include <array>
 #include <time.h>
 
@@ -126,7 +128,6 @@ struct response
 
 	string matchStr;
 	int getFile(SOCKET& socket, string& route) {
-		string header = "HTTP/1.1 200 OK\r\nContent-Type: " + getContentType(route) + "\r\nConnection: close\r\n\r\n";
 		string path = route.substr(matchStr.length(), route.length());
 		string curFilePath = getCurFilePath();
 		string goalFilePth = curFilePath + path;
@@ -140,6 +141,12 @@ struct response
 		auto_handle auto_close(file);
 
 		bind_stackfull_iocp(file, iocp, 0, 0);
+
+		auto file_size = std::filesystem::file_size(path);
+
+		auto file_length = std::format("{}", file_size);
+
+		string header = "HTTP/1.1 200 OK\r\nContent-Type: " + getContentType(route) + "\r\nConnection: close\r\nContent-length: " + file_length + "\r\n\r\n";
 
 		WSABUF wsabuf { .len = static_cast<DWORD>(header.length()) , .buf = header.data() };
 
