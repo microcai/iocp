@@ -99,7 +99,7 @@ typedef struct FiberOVERLAPPED
 	std::atomic_bool ready;
 	std::atomic_flag in_await_state;
 
-	OVERLAPPED* operator & () { return & ov; }
+	OVERLAPPED* operator & () { ready = false; return & ov; }
 
     void reset()
     {
@@ -232,6 +232,7 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 		else
 		{
 			__current_yield_fcontext = jump_fcontext(__current_yield_fcontext, &ov).fctx;
+			ov.in_await_state.clear();
 		}
 
 	}
@@ -255,6 +256,7 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 			{
 				longjmp(__current_jump_buf, 1);
 			}
+			ov.in_await_state.clear();
 		}
 	}
 
@@ -277,6 +279,7 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 			assert(__current_yield_fiber && "get_overlapped_result should be called by a Fiber!");
 			ov.target_fiber = GetCurrentFiber();
 			SwitchToFiber(__current_yield_fiber);
+			ov.in_await_state.clear();
 		}
 	}
 
@@ -298,6 +301,7 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 		{
 			assert(__current_yield_ctx && "get_overlapped_result should be called by a ucontext based coroutine!");
 			swapcontext(&ov.target, __current_yield_ctx);
+			ov.in_await_state.clear();
 		}
 	}
 
@@ -318,8 +322,8 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 		else
 		{
 			assert(__current_yield_zctx && "get_overlapped_result should be called by a ucontext based coroutine!");
-
 			zcontext_swap(&ov.target, __current_yield_zctx, 0);
+			ov.in_await_state.clear();
 		}
 	}
 
