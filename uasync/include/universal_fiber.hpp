@@ -225,6 +225,28 @@ inline void fcontext_suspend_coro(const jump_info_t& arg)
 		res_info->func(jmp_result.fctx, res_info->arguments);
 	}
 }
+#elif  defined (USE_ZCONTEXT)
+
+inline void zcontext_resume_coro(zcontext_t& target)
+{
+	zcontext_t* old = __current_yield_zctx;
+	zcontext_t self;
+	__current_yield_zctx = &self;
+	zcontext_swap(&self, &target, 0, 0);
+	__current_yield_zctx = old;
+}
+
+inline void zcontext_suspend_coro(FiberOVERLAPPED& ov)
+{
+	auto set_resume_flag = [](void* arg)
+	{
+		reinterpret_cast<FiberOVERLAPPED*>(arg)->resume_flag.test_and_set();
+		return arg;
+	};
+
+	zcontext_swap(&ov.target, __current_yield_zctx, (zcontext_swap_hook_function_t) set_resume_flag, &ov);
+}
+
 #endif
 
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -315,13 +337,7 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 	assert(__current_yield_zctx && "get_overlapped_result should be called by a ucontext based coroutine!");
 	if (!ov.ready.test_and_set())
 	{
-		auto set_ctx = [](void* arg)
-		{
-			reinterpret_cast<FiberOVERLAPPED*>(arg)->resume_flag.test_and_set();
-			return arg;
-		};
-
-		zcontext_swap(&ov.target, __current_yield_zctx, (zcontext_swap_hook_function_t) set_ctx, &ov);
+		zcontext_suspend_coro(ov);
 	}
 
 	ov.ready.clear();
@@ -355,7 +371,10 @@ inline void process_stack_full_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWO
 
 #ifdef USE_FCONTEXT
 		fcontext_resume_coro(ovl_res->target);
+#elif defined (USE_ZCONTEXT)
+		zcontext_resume_coro(ovl_res->target);
 #elif defined (USE_UCONTEXT)
+
 		ucontext_t self;
 		ucontext_t* old = __current_yield_ctx;
 		__current_yield_ctx = &self;
@@ -368,12 +387,6 @@ inline void process_stack_full_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWO
 			__current_yield_ctx_hook = nullptr;
 		}
 
-#elif defined (USE_ZCONTEXT)
-		zcontext_t self;
-		zcontext_t* old = __current_yield_zctx;
-		__current_yield_zctx = &self;
-		auto swap_data = zcontext_swap(&self, &ovl_res->target, 0, 0);
-		__current_yield_zctx = old;
 #elif defined(USE_WINFIBER)
 		if (!IsThreadAFiber())
 		{
@@ -573,15 +586,10 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 	entry_point_type entry_func = & __coroutine_entry_point<Args...>;
 	unsigned long long * new_sp = new_fiber_ctx->sp_top;
 
-	zcontext_t self;
-	zcontext_t* old = __current_yield_zctx;
-	__current_yield_zctx = &self;
-
 	new_fiber_ctx->ctx.sp = new_sp;
-
 	zcontext_setup(&new_fiber_ctx->ctx, reinterpret_cast<void (*)(void*)>(entry_func), new_fiber_ctx);
-	auto swap_data = zcontext_swap(&self, &new_fiber_ctx->ctx, 0, 0);
-	__current_yield_zctx = old;
+	zcontext_resume_coro(new_fiber_ctx->ctx);
+
 #	endif
 }
 
