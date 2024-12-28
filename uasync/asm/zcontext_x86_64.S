@@ -42,11 +42,12 @@ zcontext_swap: // void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* ar
     je call_skip
     sub $32, %rsp
     mov %r9, %rcx
-    mov %r9, %eax
-    call %r8
+    mov %r9, %rax
+    call * %r8
     add $32, %rsp
 
 //  恢复浮点上下文
+call_skip:
     fldcw   0x0(%rsp)
     ldmxcsr 0x8(%rsp)
     movaps 0x10(%rsp), %xmm15
