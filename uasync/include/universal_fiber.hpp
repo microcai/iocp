@@ -14,7 +14,7 @@ using iocp::DisconnectEx;
 using iocp::init_winsock_api_pointer;
 #endif
 
-
+#include <algorithm>
 #include <cstdint>
 #include <cstddef>
 #include <thread>
@@ -473,9 +473,9 @@ static inline void WINAPI __coroutine_entry_point(LPVOID param)
 {
 	auto converted_param = reinterpret_cast<FiberParamPack<Callable> *>(param);
 
-	std::array<Callable, 1> buf;
+	alignas(Callable) char callable_storage[sizeof(Callable)];
 
-	Callable* copyed = new (buf.data()) Callable(std::move(converted_param->callable));
+	Callable* copyed = new (callable_storage) Callable(std::move(converted_param->callable));
 
 	SwitchToFiber(converted_param->caller_fiber);
 
@@ -501,6 +501,16 @@ static inline void WINAPI __coroutine_entry_point(LPVOID param)
 }
 #endif // defined(USE_WINFIBER)
 
+template<typename T>
+inline consteval std::size_t stack_align_space()
+{
+	auto constexpr _T_size = sizeof(T);
+	auto constexpr _T_align_or_stack_align = std::max((std::size_t)16, alignof(T));
+	
+	auto constexpr T_align_size_plus1 = (_T_size/_T_align_or_stack_align + 1)*_T_align_or_stack_align;
+	auto constexpr T_align_size = (_T_size/_T_align_or_stack_align)*_T_align_or_stack_align;
+	return T_align_size < _T_size ? T_align_size_plus1 : T_align_size;
+}
 
 #if defined (USE_UCONTEXT) || defined (USE_FCONTEXT) || defined (USE_ZCONTEXT)
 
@@ -517,7 +527,11 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 	FiberContext* ctx = reinterpret_cast<FiberContext*>(arg.data);
 #endif
 
-	auto callable_ptr = reinterpret_cast<Callable*>(ctx->sp);
+	auto stack_top = reinterpret_cast<char*>(ctx->sp_top);
+	// reserve space for callable
+	stack_top -= stack_align_space<Callable>();
+
+	auto callable_ptr = reinterpret_cast<Callable*>(stack_top);
 
 	{
 		++ iocp::pending_works;
@@ -557,33 +571,45 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 }
 #endif
 
-#if defined (USE_FCONTEXT) || defined (USE_UCONTEXT) || defined (USE_ZCONTEXT)
-
 template<typename Callable>
 inline void create_detached_coroutine(Callable callable)
 {
 	using NoRefCallableType = std::decay_t<Callable>;
-	// using arg_tuple = std::tuple<Args...>;
 
+#ifdef USE_WINFIBER
+	if (!IsThreadAFiber())
+	{
+		ConvertThreadToFiber(0);
+	}
+
+	FiberParamPack<NoRefCallableType> fiber_param{GetCurrentFiber(), move_or_copy(std::move(callable))};
+#else
 	FiberContext* new_fiber_ctx = FiberContextAlloctor{}.allocate();
 
+	auto stack_top = reinterpret_cast<char*>(new_fiber_ctx->sp_top);
+	// reserve space for callable
+	stack_top -= stack_align_space<NoRefCallableType>();
+	
 	// placement new argument passed to function
 	// move/or copy construct
-	new (new_fiber_ctx->sp) NoRefCallableType{move_or_copy(std::move(callable))};
+	new (stack_top) NoRefCallableType{move_or_copy(std::move(callable))};
+
+	auto stack_size = (stack_top - reinterpret_cast<char*>(new_fiber_ctx->sp));
+
+#endif
 
 #	if defined(USE_FCONTEXT)
 
-	auto new_fiber_resume_ctx = make_fcontext(&(new_fiber_ctx->sp_top), sizeof(new_fiber_ctx->sp), __coroutine_entry_point<NoRefCallableType>);
+	auto new_fiber_resume_ctx = make_fcontext(stack_top, stack_size, __coroutine_entry_point<NoRefCallableType>);
 	fcontext_resume_coro(new_fiber_resume_ctx, new_fiber_ctx);
 
 #	elif defined (USE_UCONTEXT)
 
 	ucontext_t* new_ctx = & new_fiber_ctx->ctx;
 
-	auto stack_size = (new_fiber_ctx->sp_top - new_fiber_ctx->sp) * sizeof (unsigned long long);
-
+	
 	getcontext(new_ctx);
-	new_ctx->uc_stack.ss_sp = new_fiber_ctx->sp;
+	new_ctx->uc_stack.ss_sp = stack_top;
 	new_ctx->uc_stack.ss_flags = 0;
 	new_ctx->uc_stack.ss_size = stack_size;
 	new_ctx->uc_link = nullptr;
@@ -598,31 +624,12 @@ inline void create_detached_coroutine(Callable callable)
 	typedef void(*entry_point_type)(FiberContext*);
 
 	entry_point_type entry_func = & __coroutine_entry_point<NoRefCallableType>;
-	unsigned long long * new_sp = new_fiber_ctx->sp_top;
 
-	new_fiber_ctx->ctx.sp = new_sp;
+	new_fiber_ctx->ctx.sp = stack_top;
 	zcontext_setup(&new_fiber_ctx->ctx, reinterpret_cast<void (*)(void*)>(entry_func), new_fiber_ctx);
 	zcontext_resume_coro(new_fiber_ctx->ctx);
 
-#	endif
-}
-
-#endif  // defined (USE_ZCONTEXT) || defined (USE_ZCONTEXT)
-
-#if defined(USE_WINFIBER)
-
-template<typename Callable>
-inline void create_detached_coroutine(Callable callable)
-{
-	using NoRefCallableType = std::decay_t<Callable>;
-
-
-	if (!IsThreadAFiber())
-	{
-		ConvertThreadToFiber(0);
-	}
-
-	FiberParamPack<NoRefCallableType> fiber_param{GetCurrentFiber(), move_or_copy(std::move(callable))};
+#elif defined(USE_WINFIBER)
 
 	LPVOID new_fiber = CreateFiber(0, __coroutine_entry_point<NoRefCallableType>, &fiber_param);
 	SwitchToFiber(new_fiber);
@@ -639,9 +646,9 @@ inline void create_detached_coroutine(Callable callable)
 		__current_yield_fiber_hook();
 		__current_yield_fiber_hook = nullptr;
 	}
-}
 
-#endif // USE_WINFIBER
+#endif
+}
 
 template<typename... Args>
 inline void create_detached_coroutine(void (*function_pointer)(Args...), Args... args)
