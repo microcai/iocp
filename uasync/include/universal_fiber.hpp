@@ -18,6 +18,7 @@ using iocp::init_winsock_api_pointer;
 #include <cstdint>
 #include <cstddef>
 #include <thread>
+#include <utility>
 
 #if defined (USE_BOOST_CONTEXT)
 #define USE_FCONTEXT
@@ -153,9 +154,7 @@ struct FiberContext
 #endif
 	];
 
-	alignas(64) unsigned long long sp_top[8];
-
-	alignas(64) void* func_ptr; // NOTE： &func_ptr 相当于栈顶
+	alignas(64) unsigned long long sp_top[8]; // 栈顶
 #if defined (USE_UCONTEXT)
 	ucontext_t ctx;
 #elif defined (USE_ZCONTEXT)
@@ -438,32 +437,33 @@ inline void run_fiber_on_iocp_thread(HANDLE iocp_handle)
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 #if defined(USE_WINFIBER)
 
-template<typename... Args>
+template<typename Callable>
 struct FiberParamPack
 {
 	LPVOID caller_fiber;
-
-	void (*func_ptr)(Args...);
-	std::tuple<Args...> param;
-
-	FiberParamPack(auto fp, Args... args)
-		: func_ptr(fp)
-		, param(std::forward<Args>(args)...)
-	{}
+	Callable callable;
 };
 
-template<typename... Args>
+template<typename Callable>
 static inline void WINAPI __coroutine_entry_point(LPVOID param)
 {
-	auto converted_param = reinterpret_cast<FiberParamPack<Args...> *>(param);
+	auto converted_param = reinterpret_cast<FiberParamPack<Callable> *>(param);
 
-	std::tuple<Args...> local_copyed_args(std::move(converted_param->param));
-	auto func_ptr = converted_param->func_ptr;
+	std::array<Callable, 1> buf;
+
+	Callable* copyed = new (buf.data()) Callable(std::move(converted_param->callable));
 
 	SwitchToFiber(converted_param->caller_fiber);
 
+	// now param is invalid. use local copyed callable
+
 	++ iocp::pending_works;
-	std::apply(func_ptr, std::move(local_copyed_args));
+	{
+		// invoke
+		(*copyed)();
+		// then destory
+		copyed->~Callable();
+	}
 	-- iocp::pending_works;
 	auto to_be_deleted = GetCurrentFiber();
 	__current_yield_fiber_hook = [to_be_deleted]()
@@ -471,6 +471,8 @@ static inline void WINAPI __coroutine_entry_point(LPVOID param)
 		DeleteFiber(to_be_deleted);
 	};
 	SwitchToFiber(__current_yield_fiber);
+
+	std::unreachable();
 	ExitProcess(1);
 }
 #endif // defined(USE_WINFIBER)
@@ -478,7 +480,7 @@ static inline void WINAPI __coroutine_entry_point(LPVOID param)
 
 #if defined (USE_UCONTEXT) || defined (USE_FCONTEXT) || defined (USE_ZCONTEXT)
 
-template<typename... Args>
+template<typename Callable>
 #if defined (USE_FCONTEXT)
 inline void __coroutine_entry_point(transfer_t arg)
 #else //if defined (USE_UCONTEXT) || defined (USE_ZCONTEXT)
@@ -491,15 +493,12 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 	FiberContext* ctx = reinterpret_cast<FiberContext*>(arg.data);
 #endif
 
-	using arg_type = std::tuple<Args...>;
-
-	auto fiber_args = reinterpret_cast<arg_type*>(ctx->sp);
+	auto callable_ptr = reinterpret_cast<Callable*>(ctx->sp);
 
 	{
-		typedef void (* real_func_type)(Args...);
-		auto  real_func_ptr = reinterpret_cast<real_func_type>(ctx->func_ptr);
 		++ iocp::pending_works;
-		std::apply(real_func_ptr, std::move(*fiber_args));
+		(*callable_ptr)();
+		callable_ptr->~Callable();
 		-- iocp::pending_works;
 	}
 
@@ -536,19 +535,21 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 
 #if defined (USE_FCONTEXT) || defined (USE_UCONTEXT) || defined (USE_ZCONTEXT)
 
-template<typename... Args>
-inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
+template<typename Callable>
+inline void create_detached_coroutine(Callable callable)
 {
-	using arg_tuple = std::tuple<Args...>;
+	using NoRefCallableType = std::decay_t<Callable>;
+	// using arg_tuple = std::tuple<Args...>;
 
 	FiberContext* new_fiber_ctx = FiberContextAlloctor{}.allocate();
-	new_fiber_ctx->func_ptr = reinterpret_cast<void*>(func_ptr);
+
 	// placement new argument passed to function
-	new (new_fiber_ctx->sp) arg_tuple{std::forward<Args>(args)...};
+	// move/or copy construct
+	new (new_fiber_ctx->sp) NoRefCallableType{std::forward<Callable>(callable)};
 
 #	if defined(USE_FCONTEXT)
 
-	auto new_fiber_resume_ctx = make_fcontext(&(new_fiber_ctx->func_ptr), sizeof(new_fiber_ctx->sp), __coroutine_entry_point<Args...>);
+	auto new_fiber_resume_ctx = make_fcontext(&(new_fiber_ctx->sp_top), sizeof(new_fiber_ctx->sp), __coroutine_entry_point<NoRefCallableType>);
 	fcontext_resume_coro(new_fiber_resume_ctx, new_fiber_ctx);
 
 #	elif defined (USE_UCONTEXT)
@@ -568,7 +569,7 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 	new_ctx->uc_link = __current_yield_ctx;
 
 	typedef void (*__func)(void);
-	makecontext(new_ctx, (__func)__coroutine_entry_point<Args...>, 1, new_fiber_ctx);
+	makecontext(new_ctx, (__func)__coroutine_entry_point<NoRefCallableType>, 1, new_fiber_ctx);
 
 	swapcontext(&self, new_ctx);
 	__current_yield_ctx = old;
@@ -583,7 +584,7 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 	// setup a new stack, and jump to __coroutine_entry_point
 	typedef void(*entry_point_type)(FiberContext*);
 
-	entry_point_type entry_func = & __coroutine_entry_point<Args...>;
+	entry_point_type entry_func = & __coroutine_entry_point<NoRefCallableType>;
 	unsigned long long * new_sp = new_fiber_ctx->sp_top;
 
 	new_fiber_ctx->ctx.sp = new_sp;
@@ -597,20 +598,24 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 
 #if defined(USE_WINFIBER)
 
-template<typename... Args>
-inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
+template<typename Callable>
+inline void create_detached_coroutine(Callable callable)
 {
-	FiberParamPack<Args...> fiber_param{func_ptr, args...};
+	using NoRefCallableType = std::decay_t<Callable>;
+
 
 	if (!IsThreadAFiber())
 	{
 		ConvertThreadToFiber(0);
 	}
-	
-	fiber_param.caller_fiber = GetCurrentFiber();
-	LPVOID new_fiber = CreateFiber(0, __coroutine_entry_point<Args...>, &fiber_param);
 
+	FiberParamPack<NoRefCallableType> fiber_param{GetCurrentFiber(), std::forward<Callable>(callable)};
+
+	LPVOID new_fiber = CreateFiber(0, __coroutine_entry_point<NoRefCallableType>, &fiber_param);
 	SwitchToFiber(new_fiber);
+	// switch back, because callable is moved into new_fiber's own stack
+
+	// then switch again, to do the reall invoke
 	LPVOID old = __current_yield_fiber;
 	__current_yield_fiber = GetCurrentFiber();
 	SwitchToFiber(new_fiber);
@@ -625,30 +630,37 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 
 #endif // USE_WINFIBER
 
-template<typename Callable>
-inline void create_detached_coroutine(Callable&& callable)
+template<typename Callable, typename... Args> requires std::is_invocable_v<Callable, Args...>
+inline void create_detached_coroutine(Callable callable, Args... args)
 {
-	auto callable_func_wrapper = [](Callable&& callable)
+	struct CallableWithArgs
 	{
-		std::forward<Callable>(callable)();
+		Callable functor;
+		std::tuple<Args...> args;
+		void operator()() const
+		{
+			std::apply(functor, std::move(args));
+		}
 	};
 
-	typedef void (*lambada_converted_ptr)(Callable callable);
-
-	create_detached_coroutine(static_cast<lambada_converted_ptr>(callable_func_wrapper), std::forward<Callable>(callable));
+	create_detached_coroutine<CallableWithArgs>(CallableWithArgs{callable, std::tuple<Args...>(std::forward<Args>(args)...)});
 }
 
 template<typename Class, typename... Args>
 inline void create_detached_coroutine(void (Class::*mem_func_ptr)(Args...), Class* _this, Args... args)
 {
-	auto member_func_to_func_wrapper = [](Class* _this, void (Class::*mem_func_ptr)(Args...),  Args... args)
+	struct MemberFunctionCallableWrapper
 	{
-		(_this->*mem_func_ptr)(std::forward<Args>(args)...);
+		void (Class::*mem_func_ptr)(Args...);
+		std::tuple<Class*, Args...> args;
+
+		void operator()() const
+		{
+			std::apply(std::mem_fn(mem_func_ptr), std::move(args));
+		}
 	};
 
-	typedef void (*lambada_converted_ptr)(Class* _this, void (Class::*mem_func_ptr)(Args...),  Args... args);
-
-	create_detached_coroutine(static_cast<lambada_converted_ptr>(member_func_to_func_wrapper), _this, mem_func_ptr, std::forward<Args>(args)...);
+	create_detached_coroutine<MemberFunctionCallableWrapper>(MemberFunctionCallableWrapper{mem_func_ptr, std::tuple<Class*, Args...>(_this, std::forward<Args>(args)...)});
 }
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
