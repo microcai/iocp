@@ -181,6 +181,8 @@ struct FiberContextAlloctor
 	{
 #ifdef __linux__
 		return (FiberContext*) mmap(0, sizeof(FiberContext), PROT_READ|PROT_WRITE, MAP_GROWSDOWN|MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0);
+#elif defined (_WIN32)
+		return (FiberContext*) VirtualAlloc(0, sizeof(FiberContext), MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
 #else
 		return (FiberContext*) malloc(sizeof(FiberContext));
 #endif
@@ -190,6 +192,8 @@ struct FiberContextAlloctor
 	{
 #ifdef __linux__
 		munmap(ctx, sizeof(FiberContext));
+#elif defined (_WIN32)
+		VirtualFree(ctx, 0, MEM_RELEASE);
 #else
 		free(ctx);
 #endif
