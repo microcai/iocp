@@ -12,7 +12,6 @@
 #include <vector>
 #include <thread>
 #include <filesystem>
-#include <format>
 #include <array>
 #include <time.h>
 
@@ -144,7 +143,9 @@ struct response
 
 		auto file_size = std::filesystem::file_size(path);
 
-		auto file_length = std::format("{}", file_size);
+		char content_length_line_buffer[80];
+
+		auto content_length_line_size = snprintf(content_length_line_buffer, sizeof(content_length_line_buffer), "Content-length: %lu\r\n\r\n", file_size);
 
 		auto content_type = getContentType(route);
 
@@ -152,13 +153,12 @@ struct response
 			{.len = 31, .buf = (char*) "HTTP/1.1 200 OK\r\nContent-Type: " },
 			{.len = (ULONG) content_type.length(), .buf = content_type.data() },
 			{.len = 37, .buf = (char*) "\r\nConnection: close\r\nContent-length: "},
-			{.len = (ULONG) file_length.length(), .buf = file_length.data() },
-			{.len = 4, .buf = (char*) "\r\n\r\n" },
+			{.len = (ULONG) content_length_line_size, .buf = content_length_line_buffer },
 		};
 
 		FiberOVERLAPPED ov;
 
-		sendResult = WSASend(socket, wsabuf, 5, 0, 0, &ov, NULL);
+		sendResult = WSASend(socket, wsabuf, 4, 0, 0, &ov, NULL);
 		ov.last_error = WSAGetLastError();
 
 	    if (sendResult != 0 && ov.last_error != WSA_IO_PENDING)
