@@ -1,4 +1,4 @@
-/*
+﻿/*
 * In the linker options (on the project right-click, linker, input) you need add wsock32.lib or ws2_32.lib to the list of input files.
 */
 // #define DISABLE_THREADS 1
