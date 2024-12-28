@@ -145,6 +145,19 @@ struct HelperStack
 	alignas(64) char sp_top[1];
 };
 
+template<typename T>
+inline static auto move_or_copy(T&& arg)
+{
+	if constexpr (std::is_move_constructible_v<T>)
+	{
+		return static_cast<T&&>(arg);
+	}
+	else
+	{
+		return static_cast<const T&>(arg);
+	}
+}
+
 struct FiberContext
 {
 	unsigned long long sp[
@@ -556,7 +569,7 @@ inline void create_detached_coroutine(Callable callable)
 
 	// placement new argument passed to function
 	// move/or copy construct
-	new (new_fiber_ctx->sp) NoRefCallableType{std::forward<Callable>(callable)};
+	new (new_fiber_ctx->sp) NoRefCallableType{move_or_copy(std::move(callable))};
 
 #	if defined(USE_FCONTEXT)
 
@@ -609,7 +622,7 @@ inline void create_detached_coroutine(Callable callable)
 		ConvertThreadToFiber(0);
 	}
 
-	FiberParamPack<NoRefCallableType> fiber_param{GetCurrentFiber(), std::forward<Callable>(callable)};
+	FiberParamPack<NoRefCallableType> fiber_param{GetCurrentFiber(), move_or_copy(std::move(callable))};
 
 	LPVOID new_fiber = CreateFiber(0, __coroutine_entry_point<NoRefCallableType>, &fiber_param);
 	SwitchToFiber(new_fiber);
@@ -630,37 +643,31 @@ inline void create_detached_coroutine(Callable callable)
 
 #endif // USE_WINFIBER
 
+template<typename... Args>
+inline void create_detached_coroutine(void (*function_pointer)(Args...), Args... args)
+{
+	create_detached_coroutine([function_pointer, ...args=move_or_copy(std::move(args))]()
+	{
+		function_pointer(move_or_copy(std::move(args))...);
+	});
+}
+
 template<typename Callable, typename... Args> requires std::is_invocable_v<Callable, Args...>
 inline void create_detached_coroutine(Callable callable, Args... args)
 {
-	struct CallableWithArgs
+	create_detached_coroutine([callable = std::move(callable), ...args=move_or_copy(std::move(args))]()
 	{
-		Callable functor;
-		std::tuple<Args...> args;
-		void operator()() const
-		{
-			std::apply(functor, std::move(args));
-		}
-	};
-
-	create_detached_coroutine<CallableWithArgs>(CallableWithArgs{callable, std::tuple<Args...>(std::forward<Args>(args)...)});
+		callable(move_or_copy(std::move(args))...);
+	});
 }
 
 template<typename Class, typename... Args>
 inline void create_detached_coroutine(void (Class::*mem_func_ptr)(Args...), Class* _this, Args... args)
 {
-	struct MemberFunctionCallableWrapper
+	create_detached_coroutine([_this, mem_func_ptr, ...args=move_or_copy(std::move(args))]()
 	{
-		void (Class::*mem_func_ptr)(Args...);
-		std::tuple<Class*, Args...> args;
-
-		void operator()() const
-		{
-			std::apply(std::mem_fn(mem_func_ptr), std::move(args));
-		}
-	};
-
-	create_detached_coroutine<MemberFunctionCallableWrapper>(MemberFunctionCallableWrapper{mem_func_ptr, std::tuple<Class*, Args...>(_this, std::forward<Args>(args)...)});
+		(_this->*mem_func_ptr)(move_or_copy(std::move(args))...);
+	});
 }
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
