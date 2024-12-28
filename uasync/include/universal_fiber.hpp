@@ -593,7 +593,7 @@ inline void create_detached_coroutine(Callable callable)
 	auto stack_top = reinterpret_cast<char*>(new_fiber_ctx->sp_top);
 	// reserve space for callable
 	stack_top -= stack_align_space<NoRefCallableType>();
-	
+
 	// placement new argument passed to function
 	// move/or copy construct
 	new (stack_top) NoRefCallableType{move_or_copy(std::move(callable))};
@@ -611,7 +611,6 @@ inline void create_detached_coroutine(Callable callable)
 
 	ucontext_t* new_ctx = & new_fiber_ctx->ctx;
 
-	
 	getcontext(new_ctx);
 	new_ctx->uc_stack.ss_sp = stack_top;
 	new_ctx->uc_stack.ss_flags = 0;
