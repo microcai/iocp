@@ -145,7 +145,7 @@ struct response
 
 		char content_length_line_buffer[80];
 
-		auto content_length_line_size = snprintf(content_length_line_buffer, sizeof(content_length_line_buffer), "Content-length: %lu\r\n\r\n", file_size);
+		auto content_length_line_size = snprintf(content_length_line_buffer, sizeof(content_length_line_buffer), "%llu\r\n\r\n", (uint64_t) file_size);
 
 		auto content_type = getContentType(route);
 
