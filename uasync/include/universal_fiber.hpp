@@ -139,12 +139,6 @@ typedef struct FiberOVERLAPPED
 
 } FiberOVERLAPPED;
 
-struct HelperStack
-{
-	alignas(64) char sp[448];
-	alignas(64) char sp_top[1];
-};
-
 template<typename T>
 inline static auto move_or_copy(T&& arg)
 {
@@ -294,6 +288,35 @@ inline void zcontext_suspend_coro(FiberOVERLAPPED& ov)
 		__current_yield_ctx_hook = nullptr;
 	}
 }
+#elif defined(USE_WINFIBER)
+
+inline void winfiber_resume_coro(LPVOID target)
+{
+	LPVOID old = __current_yield_fiber;
+	__current_yield_fiber = GetCurrentFiber();
+	SwitchToFiber(target);
+	__current_yield_fiber = old;
+	if (__current_yield_fiber_hook)
+	{
+		__current_yield_fiber_hook();
+		__current_yield_fiber_hook = nullptr;
+	}
+}
+
+inline void winfiber_suspend_coro(FiberOVERLAPPED& ov)
+{
+	__current_yield_fiber_hook =[&ov]()
+	{
+		ov.resume_flag.test_and_set();
+	};
+	ov.target_fiber = GetCurrentFiber();
+	SwitchToFiber(__current_yield_fiber);
+	if (__current_yield_fiber_hook)
+	{
+		__current_yield_fiber_hook();
+		__current_yield_fiber_hook = nullptr;
+	}
+}
 
 #endif
 
@@ -334,17 +357,7 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 	assert(__current_yield_fiber && "get_overlapped_result should be called by a Fiber!");
 	if (!ov.ready.test_and_set())
 	{
-		__current_yield_fiber_hook =[&ov]()
-		{
-			ov.resume_flag.test_and_set();
-		};
-		ov.target_fiber = GetCurrentFiber();
-		SwitchToFiber(__current_yield_fiber);
-		if (__current_yield_fiber_hook)
-		{
-			__current_yield_fiber_hook();
-			__current_yield_fiber_hook = nullptr;
-		}
+		winfiber_suspend_coro(ov);
 	}
 
 	ov.ready.clear();
@@ -415,20 +428,8 @@ inline void process_stack_full_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWO
 #elif defined (USE_UCONTEXT)
 		ucontext_resume_coro(ovl_res->target);
 #elif defined(USE_WINFIBER)
-		if (!IsThreadAFiber())
-		{
-			ConvertThreadToFiber(0);
-		}
 
-		LPVOID old = __current_yield_fiber;
-		__current_yield_fiber = GetCurrentFiber();
-		SwitchToFiber(ovl_res->target_fiber);
-		__current_yield_fiber = old;
-		if (__current_yield_fiber_hook)
-		{
-			__current_yield_fiber_hook();
-			__current_yield_fiber_hook = nullptr;
-		}
+		winfiber_resume_coro(ovl_res->target_fiber);
 #endif
 	}
 }
@@ -445,6 +446,12 @@ inline void run_fiber_on_iocp_thread(HANDLE iocp_handle)
 
 	auto switch_thread_handler = [](const OVERLAPPED_ENTRY* _ov, DWORD last_error) -> void
 	{
+#ifdef USE_WINFIBER
+		if (!IsThreadAFiber())
+		{
+			ConvertThreadToFiber(0);
+		}
+#endif
 		// make sure get_overlapped_result is invoked!
 		auto ov = reinterpret_cast<FiberOVERLAPPED*>(_ov->lpOverlapped);
 
@@ -463,66 +470,24 @@ inline void run_fiber_on_iocp_thread(HANDLE iocp_handle)
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 // different stackfull implementations
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-#if defined(USE_WINFIBER)
-
-template<typename Callable>
-struct FiberParamPack
-{
-	LPVOID caller_fiber;
-	Callable callable;
-};
-
-template<typename Callable>
-static inline void WINAPI __coroutine_entry_point(LPVOID param)
-{
-	auto converted_param = reinterpret_cast<FiberParamPack<Callable> *>(param);
-
-	alignas(Callable) char callable_storage[sizeof(Callable)];
-
-	Callable* copyed = new (callable_storage) Callable(std::move(converted_param->callable));
-
-	SwitchToFiber(converted_param->caller_fiber);
-
-	// now param is invalid. use local copyed callable
-
-	++ iocp::pending_works;
-	{
-		// invoke
-		(*copyed)();
-		// then destory
-		copyed->~Callable();
-	}
-	-- iocp::pending_works;
-	auto to_be_deleted = GetCurrentFiber();
-	__current_yield_fiber_hook = [to_be_deleted]()
-	{
-		DeleteFiber(to_be_deleted);
-	};
-	SwitchToFiber(__current_yield_fiber);
-
-	std::unreachable();
-	ExitProcess(1);
-}
-#endif // defined(USE_WINFIBER)
-
 template<typename T>
 inline consteval std::size_t stack_align_space()
 {
 	auto constexpr _T_size = sizeof(T);
 	auto constexpr _T_align_or_stack_align = std::max((std::size_t)16, alignof(T));
-	
+
 	auto constexpr T_align_size_plus1 = (_T_size/_T_align_or_stack_align + 1)*_T_align_or_stack_align;
 	auto constexpr T_align_size = (_T_size/_T_align_or_stack_align)*_T_align_or_stack_align;
 	return T_align_size < _T_size ? T_align_size_plus1 : T_align_size;
 }
 
-#if defined (USE_UCONTEXT) || defined (USE_FCONTEXT) || defined (USE_ZCONTEXT)
-
 template<typename Callable>
 #if defined (USE_FCONTEXT)
 inline void __coroutine_entry_point(transfer_t arg)
-#else //if defined (USE_UCONTEXT) || defined (USE_ZCONTEXT)
+#elif defined (USE_UCONTEXT) || defined (USE_ZCONTEXT)
 static inline void __coroutine_entry_point(FiberContext* ctx)
+#elif defined (USE_WINFIBER)
+static inline void __coroutine_entry_point(LPVOID param)
 #endif
 {
 
@@ -531,15 +496,36 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 	FiberContext* ctx = reinterpret_cast<FiberContext*>(arg.data);
 #endif
 
+#if defined (USE_WINFIBER)
+	auto callable_ptr_unstable = reinterpret_cast<Callable*>(param);
+
+	alignas(Callable) char callable_storage[sizeof(Callable)];
+
+	// copy Callable to callable_storage
+	Callable* callable_ptr = new (callable_storage) Callable(std::move(*callable_ptr_unstable));
+	// now, param is invalid. proceed without touching param.
+#else
+
 	auto stack_top = reinterpret_cast<char*>(ctx->sp_top);
 	// reserve space for callable
 	stack_top -= stack_align_space<Callable>();
 
 	auto callable_ptr = reinterpret_cast<Callable*>(stack_top);
+#endif
 
 	{
 		++ iocp::pending_works;
-		(*callable_ptr)();
+		// invoke callable
+		// try
+		// {
+			(*callable_ptr)();
+		// }
+		// catch(...)
+		// {
+		// 	fprintf(stderr, "unhandled exception in coroutine code\n");
+		// 	std::terminate();
+		// }
+		// deconstruct callable
 		callable_ptr->~Callable();
 		-- iocp::pending_works;
 	}
@@ -554,8 +540,6 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 	};
 
 	fcontext_suspend_coro(info);
-	// should never happens
-	std::terminate();
 #elif defined (USE_UCONTEXT)
 	__current_yield_ctx_hook = [ctx]()
 	{
@@ -570,31 +554,33 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 	};
 
 	zcontext_swap(&ctx->ctx, __current_yield_zctx, (zcontext_swap_hook_function_t )stack_cleaner , ctx);
-#endif
+#elif defined (USE_WINFIBER)
 
-}
+	auto to_be_deleted = GetCurrentFiber();
+	__current_yield_fiber_hook = [to_be_deleted]()
+	{
+		DeleteFiber(to_be_deleted);
+	};
+	SwitchToFiber(__current_yield_fiber);
+
 #endif
+	// should never happens
+	std::terminate();
+}
 
 template<typename Callable>
 inline void create_detached_coroutine(Callable callable)
 {
 	using NoRefCallableType = std::decay_t<Callable>;
 
-#ifdef USE_WINFIBER
-	if (!IsThreadAFiber())
-	{
-		ConvertThreadToFiber(0);
-	}
-
-	FiberParamPack<NoRefCallableType> fiber_param{GetCurrentFiber(), move_or_copy(std::move(callable))};
-#else
+#ifndef USE_WINFIBER
 	FiberContext* new_fiber_ctx = FiberContextAlloctor{}.allocate();
 
 	auto stack_top = reinterpret_cast<char*>(new_fiber_ctx->sp_top);
 	// reserve space for callable
 	stack_top -= stack_align_space<NoRefCallableType>();
 
-	// placement new argument passed to function
+	// placement new the callable into the stack
 	// move/or copy construct
 	new (stack_top) NoRefCallableType{move_or_copy(std::move(callable))};
 
@@ -634,13 +620,15 @@ inline void create_detached_coroutine(Callable callable)
 
 #elif defined(USE_WINFIBER)
 
-	LPVOID new_fiber = CreateFiber(0, __coroutine_entry_point<NoRefCallableType>, &fiber_param);
-	SwitchToFiber(new_fiber);
-	// switch back, because callable is moved into new_fiber's own stack
+	if (!IsThreadAFiber())
+	{
+		ConvertThreadToFiber(0);
+	}
 
-	// then switch again, to do the reall invoke
 	LPVOID old = __current_yield_fiber;
 	__current_yield_fiber = GetCurrentFiber();
+	LPVOID new_fiber = CreateFiber(0, __coroutine_entry_point<NoRefCallableType>, &callable);
+	// switch to the new fiber
 	SwitchToFiber(new_fiber);
 	__current_yield_fiber = old;
 
