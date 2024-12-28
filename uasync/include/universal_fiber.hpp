@@ -245,6 +245,38 @@ inline void zcontext_suspend_coro(FiberOVERLAPPED& ov)
 
 	zcontext_swap(&ov.target, __current_yield_zctx, (zcontext_swap_hook_function_t) set_resume_flag, &ov);
 }
+#elif  defined (USE_UCONTEXT)
+
+inline void ucontext_resume_coro(ucontext_t& target)
+{
+	ucontext_t self;
+	ucontext_t* old = __current_yield_ctx;
+	__current_yield_ctx = &self;
+	swapcontext(&self, &target);
+	__current_yield_ctx = old;
+
+	if (__current_yield_ctx_hook)
+	{
+		__current_yield_ctx_hook();
+		__current_yield_ctx_hook = nullptr;
+	}
+}
+
+inline void zcontext_suspend_coro(FiberOVERLAPPED& ov)
+{
+	__current_yield_ctx_hook =[&ov]()
+	{
+		ov.resume_flag.test_and_set();
+	};
+
+	swapcontext(&ov.target, __current_yield_ctx);
+
+	if (__current_yield_ctx_hook)
+	{
+		__current_yield_ctx_hook();
+		__current_yield_ctx_hook = nullptr;
+	}
+}
 
 #endif
 
@@ -311,16 +343,7 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 	assert(__current_yield_ctx && "get_overlapped_result should be called by a ucontext based coroutine!");
 	if (!ov.ready.test_and_set())
 	{
-		__current_yield_ctx_hook =[&ov]()
-		{
-			ov.resume_flag.test_and_set();
-		};
-		swapcontext(&ov.target, __current_yield_ctx);
-		if (__current_yield_ctx_hook)
-		{
-			__current_yield_ctx_hook();
-			__current_yield_ctx_hook = nullptr;
-		}
+		zcontext_suspend_coro(ov);
 	}
 
 	ov.ready.clear();
@@ -373,19 +396,7 @@ inline void process_stack_full_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWO
 #elif defined (USE_ZCONTEXT)
 		zcontext_resume_coro(ovl_res->target);
 #elif defined (USE_UCONTEXT)
-
-		ucontext_t self;
-		ucontext_t* old = __current_yield_ctx;
-		__current_yield_ctx = &self;
-		swapcontext(&self, &ovl_res->target);
-		__current_yield_ctx = old;
-
-		if (__current_yield_ctx_hook)
-		{
-			__current_yield_ctx_hook();
-			__current_yield_ctx_hook = nullptr;
-		}
-
+		ucontext_resume_coro(ovl_res->target);
 #elif defined(USE_WINFIBER)
 		if (!IsThreadAFiber())
 		{
@@ -554,10 +565,6 @@ inline void create_detached_coroutine(Callable callable)
 
 #	elif defined (USE_UCONTEXT)
 
-	ucontext_t self;
-	ucontext_t* old = __current_yield_ctx;
-	__current_yield_ctx = &self;
-
 	ucontext_t* new_ctx = & new_fiber_ctx->ctx;
 
 	auto stack_size = (new_fiber_ctx->sp_top - new_fiber_ctx->sp) * sizeof (unsigned long long);
@@ -566,18 +573,11 @@ inline void create_detached_coroutine(Callable callable)
 	new_ctx->uc_stack.ss_sp = new_fiber_ctx->sp;
 	new_ctx->uc_stack.ss_flags = 0;
 	new_ctx->uc_stack.ss_size = stack_size;
-	new_ctx->uc_link = __current_yield_ctx;
+	new_ctx->uc_link = nullptr;
 
 	typedef void (*__func)(void);
 	makecontext(new_ctx, (__func)__coroutine_entry_point<NoRefCallableType>, 1, new_fiber_ctx);
-
-	swapcontext(&self, new_ctx);
-	__current_yield_ctx = old;
-	if (__current_yield_ctx_hook)
-	{
-		__current_yield_ctx_hook();
-		__current_yield_ctx_hook = nullptr;
-	}
+	ucontext_resume_coro(*new_ctx);
 
 #elif defined (USE_ZCONTEXT)
 
