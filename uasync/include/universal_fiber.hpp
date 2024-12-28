@@ -44,11 +44,17 @@ typedef void*   fcontext_t;
 
 struct transfer_t {
     fcontext_t  fctx;
-    void    *   data;
+    void    *   data; // pass jump_info_t pointer
+};
+
+struct jump_info_t {
+	void* (*func)(fcontext_t, void*);
+	void* arguments;
 };
 
 extern "C" transfer_t jump_fcontext( fcontext_t const to, void * vp);
 extern "C" fcontext_t make_fcontext( void * sp, std::size_t size, void (* fn)( transfer_t) );
+
 #elif defined(USE_ZCONTEXT)
 #include "zcontext.h"
 #elif defined(USE_WINFIBER)
@@ -79,7 +85,7 @@ typedef struct FiberOVERLAPPED
 {
 	OVERLAPPED ov;
 #if defined (USE_FCONTEXT)
-	fcontext_t resume_context;
+	fcontext_t target;
 #elif defined(USE_WINFIBER)
 	LPVOID target_fiber;
 #elif defined (USE_UCONTEXT)
@@ -126,6 +132,7 @@ typedef struct FiberOVERLAPPED
 
 	FiberOVERLAPPED()
 	{
+		set_offset(-1);
 		reset();
 	}
 
@@ -177,23 +184,6 @@ struct FiberContextAlloctor
 	}
 };
 
-#if defined(USE_FCONTEXT)
-inline void handle_fcontext_invoke(transfer_t res)
-{
-	if (reinterpret_cast<ULONG_PTR>(res.data) & 1)
-	{
-		FiberContextAlloctor{}.deallocate(reinterpret_cast<FiberContext*>(reinterpret_cast<ULONG_PTR>(res.data) ^ 1));
-	}
-	else
-	{
-		auto ov = reinterpret_cast<FiberOVERLAPPED*>(res.data);
-		ov->resume_context = res.fctx;
-		ov->resume_flag.test_and_set();
-		ov->resume_flag.notify_all();
-	}
-}
-#endif
-
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 // global thread_local data for coroutine usage
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -210,9 +200,35 @@ inline thread_local std::function<void()> __current_yield_ctx_hook = NULL;
 #endif
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
+#if defined(USE_FCONTEXT)
+// run the "to" coro, and pass arg to it.
+inline void fcontext_resume_coro(fcontext_t const to, void* arg = 0)
+{
+	auto old = __current_yield_fcontext;
+	auto jmp_result = jump_fcontext(to, arg);
+	__current_yield_fcontext = old;
+	jump_info_t* res_info = (jump_info_t*) jmp_result.data;
+	if (res_info && res_info->func)
+	{
+		res_info->func(jmp_result.fctx, res_info->arguments);
+	}
+}
+
+// transfer control back to main thread. called by coro
+inline void fcontext_suspend_coro(const jump_info_t& arg)
+{
+	auto jmp_result = jump_fcontext(__current_yield_fcontext, const_cast<jump_info_t*>(&arg));
+	__current_yield_fcontext = jmp_result.fctx;
+	jump_info_t* res_info = (jump_info_t*) jmp_result.data;
+	if (res_info && res_info->func)
+	{
+		res_info->func(jmp_result.fctx, res_info->arguments);
+	}
+}
+#endif
 
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-//  diffrent impl for "DWORD get_overlapped_result(FiberOVERLAPPED* ov)"
+//  diffrent impl for "DWORD get_overlapped_result(FiberOVERLAPPED& ov)"
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 #if defined(USE_FCONTEXT)
@@ -222,7 +238,17 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 	assert(__current_yield_fcontext && "get_overlapped_result should be called by a Fiber!");
 	if (!ov.ready.test_and_set())
 	{
-		__current_yield_fcontext = jump_fcontext(__current_yield_fcontext, &ov).fctx;
+		jump_info_t info = {
+			.func = (void* (*)(fcontext_t ctx, void* arg)) [](fcontext_t ctx, void* arg) -> void* {
+				auto ov = reinterpret_cast<FiberOVERLAPPED*>(arg);
+				ov->target = ctx;
+				ov->resume_flag.test_and_set();
+				ov->resume_flag.notify_all();
+				return arg;
+			 },
+			.arguments = &ov,
+		};
+		fcontext_suspend_coro(info);
 	}
 
 	ov.ready.clear();
@@ -328,10 +354,7 @@ inline void process_stack_full_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWO
 		assert(ovl_res->ready.test());
 
 #ifdef USE_FCONTEXT
-		auto old = __current_yield_fcontext;
-		auto coro_invoke_resume = jump_fcontext(ovl_res->resume_context, 0);
-		handle_fcontext_invoke(coro_invoke_resume);
-		__current_yield_fcontext = old;
+		fcontext_resume_coro(ovl_res->target);
 #elif defined (USE_UCONTEXT)
 		ucontext_t self;
 		ucontext_t* old = __current_yield_ctx;
@@ -468,9 +491,15 @@ static inline void __coroutine_entry_point(FiberContext* ctx)
 	}
 
 #if defined (USE_FCONTEXT)
-	auto tagged_ptr = reinterpret_cast<ULONG_PTR>(ctx) | 1;
+	jump_info_t info{
+		.func = (void* (*)(fcontext_t, void* arg)) [](fcontext_t, void* arg){
+			FiberContextAlloctor{}.deallocate(reinterpret_cast<FiberContext*>(arg));
+			return arg;
+		},
+		.arguments = ctx
+	};
 
-	jump_fcontext(__current_yield_fcontext, reinterpret_cast<void*>(tagged_ptr));
+	fcontext_suspend_coro(info);
 	// should never happens
 	std::terminate();
 #elif defined (USE_UCONTEXT)
@@ -505,11 +534,10 @@ inline void create_detached_coroutine(void (*func_ptr)(Args...), Args... args)
 	new (new_fiber_ctx->sp) arg_tuple{std::forward<Args>(args)...};
 
 #	if defined(USE_FCONTEXT)
+
 	auto new_fiber_resume_ctx = make_fcontext(&(new_fiber_ctx->func_ptr), sizeof(new_fiber_ctx->sp), __coroutine_entry_point<Args...>);
-	auto old = __current_yield_fcontext;
-	auto new_fiber_invoke_result = jump_fcontext(new_fiber_resume_ctx, new_fiber_ctx);
-	handle_fcontext_invoke(new_fiber_invoke_result);
-	__current_yield_fcontext = old;
+	fcontext_resume_coro(new_fiber_resume_ctx, new_fiber_ctx);
+
 #	elif defined (USE_UCONTEXT)
 
 	ucontext_t self;
