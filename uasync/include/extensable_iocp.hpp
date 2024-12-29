@@ -27,6 +27,7 @@
 
 #include <array>
 #include <atomic>
+#include <cassert>
 
 namespace iocp
 {
@@ -79,6 +80,30 @@ namespace iocp
                 }
             }
         }
+    }
+
+    template<typename Callable>
+    void post_task_to_iocp(HANDLE iocp_handle, Callable callable)
+    {
+        struct CallableOverlapped : OVERLAPPED
+        {
+            Callable callable;
+            CallableOverlapped(Callable&& callable_)
+                : callable(std::move(callable_))
+            {}
+        };
+
+        auto  op = new CallableOverlapped(callable);
+
+        PostQueuedCompletionStatus(iocp_handle, 2999,
+            (ULONG_PTR)(void*)(overlapped_proc_func)[](const OVERLAPPED_ENTRY* ov_entry, DWORD last_error)
+            {
+                assert(ov_entry->dwNumberOfBytesTransferred == 2999);
+                auto op = reinterpret_cast<const CallableOverlapped*>(ov_entry->lpOverlapped);
+                op->callable();
+                delete op;
+            }, 0
+        );
     }
 
 #if defined(_WIN32)
