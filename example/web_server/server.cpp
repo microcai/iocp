@@ -339,7 +339,7 @@ public:
 		{
 			// 注意 这个 WSA_FLAG_FAKE_CREATION
 			// 记得在 win 上给 定义为 0
-			SOCKET socket = WSASocket(family, SOCK_STREAM , IPPROTO_TCP, 0 , 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_FAKE_CREATION);
+			SOCKET socket = WSASocketW(family, SOCK_STREAM , IPPROTO_TCP, 0 , 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_FAKE_CREATION);
 			awaitable_overlapped ov;
 			char outputbuffer[128];
 			DWORD accepted_size = 0;
