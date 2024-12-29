@@ -155,9 +155,11 @@ inline static auto move_or_copy(T&& arg)
 struct FiberContext
 {
 	unsigned long long sp[
-		1024*8 - 64/sizeof(unsigned long long) - 64/sizeof(unsigned long long)
+		1024*8 - 8
 #if defined (USE_UCONTEXT)
 		 - sizeof(ucontext_t) / sizeof(unsigned  long long)
+#elif defined (USE_ZCONTEXT)
+		 - sizeof(zcontext_t) / sizeof(unsigned  long long)
 #endif
 	];
 
