@@ -102,7 +102,7 @@ namespace iocp
                 auto op = reinterpret_cast<const CallableOverlapped*>(ov_entry->lpOverlapped);
                 op->callable();
                 delete op;
-            }, 0
+            }, op
         );
     }
 

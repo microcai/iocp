@@ -301,7 +301,7 @@ public:
 	WSADATA windowsSocketData;
 	HANDLE eventQueue;
 #ifndef DISABLE_THREADS
-	std::array<HANDLE, 24> eventQueues;
+	std::vector<HANDLE> eventQueues;
 #endif
 
 	void start() {
@@ -422,11 +422,10 @@ public:
 		if (eventQueue == NULL)
 			errorHandle("IOCP create");
 #ifndef DISABLE_THREADS
-		for (int i=0; i < eventQueues.size(); i ++)
+		for (int i=0; i < std::thread::hardware_concurrency()-2; i ++)
 		{
-			eventQueues[i] = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
-			if (eventQueues[i] == NULL)
-				errorHandle("IOCP create");
+			auto iocp_handle = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+			eventQueues.push_back(iocp_handle);
 		}
 #endif
 		// Fill in the address structure
