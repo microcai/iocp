@@ -216,8 +216,17 @@ inline thread_local std::function<void()> __current_yield_ctx_hook = NULL;
 // run the "to" coro, and pass arg to it.
 inline void fcontext_resume_coro(fcontext_t const to, void* arg = 0)
 {
+	jump_info_t info = {
+		.func = (void* (*)(fcontext_t, void*))[](fcontext_t caller_ctx, void* arg)
+			{
+				__current_yield_fcontext = caller_ctx;
+				return arg;
+			},
+		.arguments = 0,
+	};
+
 	auto old = __current_yield_fcontext;
-	auto jmp_result = jump_fcontext(to, arg);
+	auto jmp_result = jump_fcontext(to, arg ? arg : &info);
 	__current_yield_fcontext = old;
 	jump_info_t* res_info = (jump_info_t*) jmp_result.data;
 	if (res_info && res_info->func)
@@ -230,7 +239,6 @@ inline void fcontext_resume_coro(fcontext_t const to, void* arg = 0)
 inline void fcontext_suspend_coro(const jump_info_t& arg)
 {
 	auto jmp_result = jump_fcontext(__current_yield_fcontext, const_cast<jump_info_t*>(&arg));
-	__current_yield_fcontext = jmp_result.fctx;
 	jump_info_t* res_info = (jump_info_t*) jmp_result.data;
 	if (res_info && res_info->func)
 	{
