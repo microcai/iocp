@@ -66,7 +66,7 @@ When using, use the header file universal_async.hpp
 
 Lists of implemented APIs:
 
-| IOCP 接口                   | io_uring 后端 实现 状态 | asio 后端 （epoll） 实现状态 |
+| IOCP 接口                   | io_uring backend | asio(epoll) backend|
 | --------------------------- | ----------------------- | ---------------------------- |
 | CreateIoCompletionPort      | ✅                       | ✅                            |
 | GetQueuedCompletionStatus   | ✅                       | ✅                            |
