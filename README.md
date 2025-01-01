@@ -1,5 +1,7 @@
 [![actions workflow](https://github.com/microcai/iocp/actions/workflows/ci.yml/badge.svg)](https://github.com/microcai/iocp/actions)
 
+For English, visit [this link](README.en.md)
+
 # iocp4linux 和 µasync
 
 本仓库由两个项目构成，一曰 µasync， 二曰 iocp4linux
@@ -43,14 +45,9 @@
 
 iocp4linux 如名字所言，它在 Linux 上实现IO完成端口。它的目的和 WEPOLL 正好相反。
 
-iocp4linux as name suggest, provide windows equivalent IOCP API for linux. This is the reverse
-of what wepoll does.
-
 至于为何要和 wepoll 反着来，这可不是为了和 wepoll 赌气。
 而是因为 reactor 实际上是一个残废模型。
 具体可以参考 [proactor是最理想的模型](https://microcai.org/2024/11/19/proactor-is-better-than-reactor.html)
-
-
 
 ## Usage
 
@@ -95,7 +92,7 @@ of what wepoll does.
 
 # Performance
 
-以下结果是运行 例子列程 ./test/web_server/server.cpp 所测得：
+以下结果是运行 例子列程 ./example/web_server/server.cpp 所测得：
 
 ![img](doc/img/test_with_wrk.png)
 
@@ -223,4 +220,9 @@ awaitable.hpp 是来自 µcoro 项目的 c++20 协程库。被 universal_async.h
 ## 关于 awaitable.hpp
 
 这个文件来自 [µcoro](https://github.com/avplayer/ucoro) 。 正是这个几百行的小代码，帮助 uasync 实现了 c++20 的协程支持。
+
+
+# 交流
+
+如果疑问，除了使用 github 的 issue 还可以加入 [iocp4linux 电报群](https://t.me/iocp4linux)
 
