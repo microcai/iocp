@@ -83,7 +83,7 @@ namespace iocp
     }
 
     template<typename Callable>
-    void post_task_to_iocp(HANDLE iocp_handle, Callable callable)
+    void post_task_to_iocp(HANDLE iocp_handle, Callable&& callable)
     {
         struct CallableOverlapped : OVERLAPPED
         {
@@ -93,7 +93,7 @@ namespace iocp
             {}
         };
 
-        auto  op = new CallableOverlapped(callable);
+        auto  op = new CallableOverlapped(std::forward<Callable>(callable));
 
         PostQueuedCompletionStatus(iocp_handle, 2999,
             (ULONG_PTR)(void*)(overlapped_proc_func)[](const OVERLAPPED_ENTRY* ov_entry, DWORD last_error)
