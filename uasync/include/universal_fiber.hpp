@@ -249,7 +249,7 @@ inline void fcontext_suspend_coro(const jump_info_t& arg)
 
 inline void zcontext_resume_coro(zcontext_t& target)
 {
-	zcontext_t* old = __current_yield_zctx;
+	auto old = __current_yield_zctx;
 	zcontext_t self;
 	__current_yield_zctx = &self;
 	zcontext_swap(&self, &target, 0, 0);
@@ -264,6 +264,7 @@ inline void zcontext_suspend_coro(FiberOVERLAPPED& ov)
 		return arg;
 	};
 
+	assert(__current_yield_zctx && "get_overlapped_result should be called by a zcontext based coroutine!");
 	zcontext_swap(&ov.target, __current_yield_zctx, (zcontext_swap_hook_function_t) set_resume_flag, &ov);
 }
 #elif  defined (USE_UCONTEXT)
@@ -396,7 +397,6 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 
 inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 {
-	assert(__current_yield_zctx && "get_overlapped_result should be called by a ucontext based coroutine!");
 	if (!ov.ready.test_and_set())
 	{
 		zcontext_suspend_coro(ov);

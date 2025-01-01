@@ -1,6 +1,7 @@
 ﻿
 #pragma once
 
+#include <cstring>
 #include <cstdint>
 
 extern "C" {
@@ -25,23 +26,29 @@ inline void zcontext_setup(zcontext_t* target, void (*func)(void*arg), void* arg
 {
     struct startup_stack_structure
     {
-#ifdef _WIN32
-        void* fc_x87_cw;
-        void* fc_mxcsr;
-        void* mmx_reg[20];
-        void* pad;
-        void* general_reg[8];
-#else
+#if defined(__aarch64__)
+        void* generial_reg[18];
+        void* reg_fp;
+        void* ret_address;
+        void* param1;
+        void* param2;
+#elif defined (__x86_64__)
+
         void* padding;
-        void* fc_x87_cw;
-        void* fc_mxcsr;
-        void* general_reg[6];
-#endif
+        void* general_reg[8];
         void* ret_address;
         void* param1;
         void* param2;
 
-#ifdef _WIN32
+#elif defined (_M_X64) && defined (_WIN32)
+        void* fc_x87_cw;
+        void* fc_mxcsr;
+        void* mmx_reg[20];
+        void* padding;
+        void* general_reg[8];
+        void* ret_address;
+        void* param1;
+        void* param2;
         void* padding[2];
 #endif
     };
@@ -54,10 +61,11 @@ inline void zcontext_setup(zcontext_t* target, void (*func)(void*arg), void* arg
 
     auto startup_stack = reinterpret_cast<startup_stack_structure*>(sp);
 
+    std::memset(sp, 0, sizeof(startup_stack_structure));
+
     startup_stack->ret_address = (void*) zcontext_entry_point;
     startup_stack->param1 = (void*) func;
     startup_stack->param2 = argument;
-    startup_stack->fc_mxcsr = startup_stack->fc_x87_cw = 0;
 }
 
 } // extern "C"
