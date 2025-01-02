@@ -1,10 +1,6 @@
 cmake_minimum_required(VERSION 3.30)
 project(uasync)
 
-if (CMAKE_GENERATOR MATCHES "Ninja")
-set(CMAKE_ASM_MASM_CREATE_STATIC_LIBRARY "<CMAKE_AR> /OUT:<TARGET> <LINK_FLAGS> <OBJECTS>")
-endif()
-
 option(DISABLE_BOOST_CONTEXT "disable the usa of boost.context asm" OFF)
 option(DISABLE_UCONTEXT "disable ucontext and use setjmp/longjmp" OFF)
 option(USE_ZCONTEXT "use zcontext api to do context switch" OFF)

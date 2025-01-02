@@ -1,4 +1,9 @@
+
 if(MSVC)
+    if (CMAKE_GENERATOR MATCHES "Ninja")
+        set(CMAKE_ASM_MASM_CREATE_STATIC_LIBRARY "<CMAKE_AR> /OUT:<TARGET> <LINK_FLAGS> <OBJECTS>")
+    endif()
+
     enable_language(ASM_MASM)
     add_library(zcontext zcontext_x86_64.asm)
 else()
