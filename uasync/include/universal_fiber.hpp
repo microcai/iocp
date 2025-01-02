@@ -599,8 +599,7 @@ inline void create_detached_coroutine(Callable callable)
 
 	entry_point_type entry_func = & __coroutine_entry_point<NoRefCallableType>;
 
-	new_fiber_ctx->ctx.sp = stack_top;
-	new_fiber_ctx->ctx = zcontext_setup(new_fiber_ctx->sp, sizeof(new_fiber_ctx->sp), reinterpret_cast<void (*)(void*)>(entry_func), new_fiber_ctx);
+	new_fiber_ctx->ctx = zcontext_setup(new_fiber_ctx->sp, stack_size, reinterpret_cast<void (*)(void*)>(entry_func), new_fiber_ctx);
 	zcontext_resume_coro(new_fiber_ctx->ctx);
 
 #elif defined(USE_WINFIBER)
