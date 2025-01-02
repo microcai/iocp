@@ -143,9 +143,7 @@ struct response
 
 		auto file_size = std::filesystem::file_size(path);
 
-		char content_length_line_buffer[80];
-
-		auto content_length_line_size = snprintf(content_length_line_buffer, sizeof(content_length_line_buffer), "%llu\r\n\r\n", (uint64_t) file_size);
+		auto content_length_line = std::to_string(file_size) + "\r\n\r\n";
 
 		auto content_type = getContentType(route);
 
@@ -153,7 +151,7 @@ struct response
 			{.len = 31, .buf = (char*) "HTTP/1.1 200 OK\r\nContent-Type: " },
 			{.len = (ULONG) content_type.length(), .buf = content_type.data() },
 			{.len = 37, .buf = (char*) "\r\nConnection: close\r\nContent-length: "},
-			{.len = (ULONG) content_length_line_size, .buf = content_length_line_buffer },
+			{.len = (ULONG) content_length_line.length(), .buf = content_length_line.data() },
 		};
 
 		FiberOVERLAPPED ov;
