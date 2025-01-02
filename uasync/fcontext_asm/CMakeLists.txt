@@ -145,7 +145,7 @@ set(_asm_suffix ${BOOST_CONTEXT_ARCHITECTURE}_${BOOST_CONTEXT_ABI}_${BOOST_CONTE
 
 set(ASM_SOURCES
     make_${_asm_suffix}
-    jump_${_asm_suffix}
+    ontop_${_asm_suffix}
 )
 
 unset(_asm_suffix)

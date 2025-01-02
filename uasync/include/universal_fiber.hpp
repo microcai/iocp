@@ -213,38 +213,36 @@ inline thread_local std::function<void()> __current_yield_ctx_hook = NULL;
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
 #if defined(USE_FCONTEXT)
+
+inline transfer_t on_resume_fcontext(transfer_t caller)
+{
+	__current_yield_fcontext = caller.fctx;
+	return caller;
+}
+
 // run the "to" coro, and pass arg to it.
 inline void fcontext_resume_coro(fcontext_t const to, void* arg = 0)
 {
-	jump_info_t info = {
-		.func = (void* (*)(fcontext_t, void*))[](fcontext_t caller_ctx, void* arg)
-			{
-				__current_yield_fcontext = caller_ctx;
-				return arg;
-			},
-		.arguments = 0,
-	};
-
 	auto old = __current_yield_fcontext;
-	auto jmp_result = jump_fcontext(to, arg ? arg : &info);
+	auto jmp_result = ontop_fcontext(to, arg, on_resume_fcontext);
 	__current_yield_fcontext = old;
-	jump_info_t* res_info = (jump_info_t*) jmp_result.data;
-	if (res_info && res_info->func)
-	{
-		res_info->func(jmp_result.fctx, res_info->arguments);
-	}
+}
+
+inline transfer_t on_suspend_fcontext(transfer_t caller)
+{
+	auto ov = reinterpret_cast<FiberOVERLAPPED*>(caller.data);
+	ov->target = caller.fctx;
+	ov->resume_flag.test_and_set();
+	ov->resume_flag.notify_all();
+	return caller;
 }
 
 // transfer control back to main thread. called by coro
-inline void fcontext_suspend_coro(const jump_info_t& arg)
+inline void fcontext_suspend_coro(FiberOVERLAPPED& ov)
 {
-	auto jmp_result = jump_fcontext(__current_yield_fcontext, const_cast<jump_info_t*>(&arg));
-	jump_info_t* res_info = (jump_info_t*) jmp_result.data;
-	if (res_info && res_info->func)
-	{
-		res_info->func(jmp_result.fctx, res_info->arguments);
-	}
+	ontop_fcontext(__current_yield_fcontext, static_cast<void*>(&ov), on_suspend_fcontext);
 }
+
 #elif  defined (USE_ZCONTEXT)
 
 inline void zcontext_resume_coro(zcontext_t& target)
@@ -342,17 +340,7 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 	assert(__current_yield_fcontext && "get_overlapped_result should be called by a Fiber!");
 	if (!ov.ready.test_and_set())
 	{
-		jump_info_t info = {
-			.func = (void* (*)(fcontext_t ctx, void* arg)) [](fcontext_t ctx, void* arg) -> void* {
-				auto ov = reinterpret_cast<FiberOVERLAPPED*>(arg);
-				ov->target = ctx;
-				ov->resume_flag.test_and_set();
-				ov->resume_flag.notify_all();
-				return arg;
-			 },
-			.arguments = &ov,
-		};
-		fcontext_suspend_coro(info);
+		fcontext_suspend_coro(ov);
 	}
 
 	ov.ready.clear();
@@ -492,7 +480,6 @@ static inline void __coroutine_entry_point(LPVOID param)
 {
 
 #ifdef USE_FCONTEXT
-	__current_yield_fcontext = arg.fctx;
 	FiberContext* ctx = reinterpret_cast<FiberContext*>(arg.data);
 #endif
 
@@ -531,15 +518,13 @@ static inline void __coroutine_entry_point(LPVOID param)
 	}
 
 #if defined (USE_FCONTEXT)
-	jump_info_t info{
-		.func = (void* (*)(fcontext_t, void* arg)) [](fcontext_t, void* arg){
-			FiberContextAlloctor{}.deallocate(reinterpret_cast<FiberContext*>(arg));
-			return arg;
-		},
-		.arguments = ctx
+	auto on_free_fcontext = [](transfer_t caller)
+	{
+		FiberContextAlloctor{}.deallocate(reinterpret_cast<FiberContext*>(caller.data));
+		return caller;
 	};
 
-	fcontext_suspend_coro(info);
+	ontop_fcontext(__current_yield_fcontext, ctx, on_free_fcontext);
 #elif defined (USE_UCONTEXT)
 	__current_yield_ctx_hook = [ctx]()
 	{
