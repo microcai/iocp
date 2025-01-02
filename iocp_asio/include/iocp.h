@@ -75,7 +75,7 @@ typedef struct _OVERLAPPED
 	union {
 		struct
 		{
-#ifdef __LITTLE_ENDIAN__
+#if __BYTE_ORDER == __LITTLE_ENDIAN
 			DWORD Offset;
 			DWORD OffsetHigh;
 #else

@@ -840,7 +840,7 @@ IOCP_DECL BOOL ReadFile(
 
 	// *lpNumberOfBytesRecvd = 0;
 
-	int readed = read(s->native_handle(), lpBuffer, nNumberOfBytesToRead);
+	int readed = pread(s->native_handle(), lpBuffer, nNumberOfBytesToRead, lpOverlapped->offset_64);
 	if (lpNumberOfBytesRead)
 		*lpNumberOfBytesRead = readed;
 
