@@ -483,6 +483,7 @@ static inline void __coroutine_entry_point(LPVOID param)
 {
 
 #ifdef USE_FCONTEXT
+	__current_yield_fcontext = arg.fctx;
 	FiberContext* ctx = reinterpret_cast<FiberContext*>(arg.data);
 #endif
 
@@ -579,7 +580,7 @@ inline void create_detached_coroutine(Callable callable)
 #	if defined(USE_FCONTEXT)
 
 	auto new_fiber_resume_ctx = make_fcontext(stack_top, stack_size, __coroutine_entry_point<NoRefCallableType>);
-	fcontext_resume_coro(new_fiber_resume_ctx, new_fiber_ctx);
+	jump_fcontext(new_fiber_resume_ctx, new_fiber_ctx);
 
 #	elif defined (USE_UCONTEXT)
 
