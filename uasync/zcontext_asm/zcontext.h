@@ -1,14 +1,16 @@
 ﻿
 #pragma once
 
-#include <cstring>
-#include <cstdint>
+#include <string.h>
+#include <stdint.h>
 
-extern "C" {
-struct zcontext_t
-{
+#ifdef __cplusplus
+extern "C" namespace zcontext  {
+#endif
+
+typedef struct _zcontext_t{
     void* sp;// pointer to active stack buttom
-};
+}zcontext_t;
 
 typedef void* (*zcontext_swap_hook_function_t)(void*) ;
 
@@ -18,11 +20,11 @@ void* zcontext_entry_point(); // from ASM code
 // 使用本 API 进行协程切换。
 // 在 to 协程栈上，会调用 hook_function(argument)
 // 并且将 hook_function 的执行结果 返回给 to 协程
-void* zcontext_swap(zcontext_t* from, zcontext_t* to, zcontext_swap_hook_function_t hook_function, void* argument); // from ASM code
+void* zcontext_swap(zcontext_t* from, const zcontext_t* to, zcontext_swap_hook_function_t hook_function, void* argument); // from ASM code
 
 // 创建一个新协程.
 // 创建后，使用 zcontext_swap 切换.
-inline void zcontext_setup(zcontext_t* target, void (*func)(void*arg), void* argument)
+inline zcontext_t zcontext_setup(void* stack_mem, size_t stack_size, void (*func)(void*arg), void* argument)
 {
     struct startup_stack_structure
     {
@@ -32,19 +34,19 @@ inline void zcontext_setup(zcontext_t* target, void (*func)(void*arg), void* arg
         void* ret_address;
         void* param1;
         void* param2;
+        void* padding[2];
 #elif defined (__x86_64__)
 
-        void* padding;
+        void* padd;
         void* general_reg[8];
         void* ret_address;
         void* param1;
         void* param2;
-
 #elif defined (_M_X64) && defined (_WIN32)
         void* fc_x87_cw;
         void* fc_mxcsr;
         void* mmx_reg[20];
-        void* padding;
+        void* padd;
         void* general_reg[8];
         void* ret_address;
         void* param1;
@@ -53,19 +55,23 @@ inline void zcontext_setup(zcontext_t* target, void (*func)(void*arg), void* arg
 #endif
     };
 
-    char* sp = reinterpret_cast<char*>(target->sp);
+    zcontext_t target;
 
-    sp -= sizeof(startup_stack_structure);
+    char* sp = reinterpret_cast<char*>(stack_mem) + stack_size - sizeof(startup_stack_structure);;
 
-    target->sp = sp;
+    target.sp = sp;
 
     auto startup_stack = reinterpret_cast<startup_stack_structure*>(sp);
 
-    std::memset(sp, 0, sizeof(startup_stack_structure));
+    memset(sp, 0, sizeof(startup_stack_structure));
 
     startup_stack->ret_address = (void*) zcontext_entry_point;
     startup_stack->param1 = (void*) func;
     startup_stack->param2 = argument;
+
+    return target;
 }
 
-} // extern "C"
+#ifdef __cplusplus
+} // extern "C" namespace zcontext
+#endif

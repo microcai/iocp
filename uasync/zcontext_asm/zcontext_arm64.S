@@ -30,9 +30,11 @@ zcontext_swap: // zcontext_swap(zcontext_t* from, zcontext_t* to, swap_hook_func
     mov sp, x10
 
 //  调用 hook_function(argument)
-    cbz	x2, skip_call
     mov x0, x3
+    cbz	x2, skip_call
+    sub sp, sp, #0x10
     blr x2
+    add sp, sp, #0x10
 
 skip_call:
 
@@ -59,6 +61,7 @@ skip_call:
 .align 16
 .global zcontext_entry_point
 zcontext_entry_point:
-    ldp x1, x0, [sp, #0x00]
-    blr x1
+    mov x1, x0
+    ldp x2, x0, [sp, #0x00]
+    blr x2
     bl _exit

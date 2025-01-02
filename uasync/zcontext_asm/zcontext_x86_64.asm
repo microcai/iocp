@@ -42,11 +42,11 @@ zcontext_swap PROC  FRAME
     mov rsp, [rdx]
 
 ;  执行 hook 函数.
+    mov rcx, r9
+    mov rax, r9
     test r8, r8
     je call_skip
     sub rsp, 32
-    mov rcx, r9
-    mov rax, r9
     call r8
     add rsp, 32
 call_skip:
@@ -81,18 +81,19 @@ call_skip:
 zcontext_swap ENDP
 
 
-
 zcontext_entry_point PROC  FRAME
 .endprolog
+    mov r12, rax
     sub rsp, 020h
     lea rcx, [rsp + 8]
     mov r8, 08001Fh
     mov rdx, r8
     call _controlfp_s
     add rsp, 020h
-    pop rax
+    pop rbx
     pop rcx
-    call rax
+    mov rdx, r12
+    call rbx
     call ExitProcess
     hlt
 zcontext_entry_point ENDP

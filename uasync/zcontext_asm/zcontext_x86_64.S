@@ -38,11 +38,11 @@ zcontext_swap: // void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* ar
     mov (%rdx), %rsp
 
 //  执行 hook 函数.
+    mov %r9, %rcx
+    mov %r9, %rax
     test %r8, %r8
     je call_skip
     sub $32, %rsp
-    mov %r9, %rcx
-    mov %r9, %rax
     call * %r8
     add $32, %rsp
 
@@ -78,15 +78,18 @@ call_skip:
 .align 16
 .global zcontext_entry_point
 zcontext_entry_point:
+    mov %rax, %r12
     sub $0x20, %rsp
     lea 0x8(%rsp), %rcx
     mov $0x8001F, %r8
     mov %r8, %rdx
     call _controlfp_s
     add $0x20, %rsp
-    pop %rax
+    pop %rbx
     pop %rcx
-    call *%rax
+    mov %r12, %rdx
+    sub $0x20, %rsp
+    call *%rbx
     call ExitProcess
     hlt
 
@@ -140,9 +143,10 @@ skip_call:
 .align 16
 .global zcontext_entry_point
 zcontext_entry_point:
-    pop %rax
+    pop %rbx
     pop %rdi
-    call *%rax
+    mov %rax, %rsi
+    call *%rbx
     call _exit
     hlt
 

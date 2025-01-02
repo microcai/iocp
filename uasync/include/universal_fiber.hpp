@@ -41,23 +41,12 @@ using iocp::init_winsock_api_pointer;
 
 #if defined (USE_FCONTEXT)
 
-typedef void*   fcontext_t;
-
-struct transfer_t {
-    fcontext_t  fctx;
-    void    *   data; // pass jump_info_t pointer
-};
-
-struct jump_info_t {
-	void* (*func)(fcontext_t, void*);
-	void* arguments;
-};
-
-extern "C" transfer_t jump_fcontext( fcontext_t const to, void * vp);
-extern "C" fcontext_t make_fcontext( void * sp, std::size_t size, void (* fn)( transfer_t) );
+#include "fcontext.hpp"
+using namespace fcontext;
 
 #elif defined(USE_ZCONTEXT)
 #include "zcontext.h"
+using namespace zcontext;
 #elif defined(USE_WINFIBER)
 
 #elif defined(USE_UCONTEXT)
@@ -152,23 +141,34 @@ inline static auto move_or_copy(T&& arg)
 	}
 }
 
+template<typename T>
+inline consteval std::size_t stack_align_space()
+{
+	auto constexpr _T_size = std::max(sizeof(T), alignof(T));
+	auto constexpr _T_align_or_stack_align = std::max((std::size_t)32, alignof(T));
+
+	auto constexpr T_align_size_plus1 = (_T_size/_T_align_or_stack_align + 1)*_T_align_or_stack_align;
+	auto constexpr T_align_size = (_T_size/_T_align_or_stack_align)*_T_align_or_stack_align;
+	return T_align_size < _T_size ? T_align_size_plus1 : T_align_size;
+}
+
+
 struct FiberContext
 {
-	unsigned long long sp[
-		1024*8 - 8
 #if defined (USE_UCONTEXT)
-		 - sizeof(ucontext_t) / sizeof(unsigned  long long)
+	using context_type = ucontext_t;
 #elif defined (USE_ZCONTEXT)
-		 - sizeof(zcontext_t) / sizeof(unsigned  long long)
+	using context_type = zcontext_t;
+#else
+	using context_type = char;
 #endif
+
+	char sp[
+		65536 - stack_align_space<unsigned long long>() - stack_align_space<context_type>()
 	];
 
-	alignas(64) unsigned long long sp_top[8]; // 栈顶
-#if defined (USE_UCONTEXT)
-	ucontext_t ctx;
-#elif defined (USE_ZCONTEXT)
-	zcontext_t ctx;
-#endif
+	alignas(32) unsigned long long sp_top[1]; // 栈顶
+	alignas(32) context_type ctx;
 };
 
 struct FiberContextAlloctor
@@ -480,16 +480,6 @@ inline void run_fiber_on_iocp_thread(HANDLE iocp_handle)
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 // different stackfull implementations
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-template<typename T>
-inline consteval std::size_t stack_align_space()
-{
-	auto constexpr _T_size = sizeof(T);
-	auto constexpr _T_align_or_stack_align = std::max((std::size_t)16, alignof(T));
-
-	auto constexpr T_align_size_plus1 = (_T_size/_T_align_or_stack_align + 1)*_T_align_or_stack_align;
-	auto constexpr T_align_size = (_T_size/_T_align_or_stack_align)*_T_align_or_stack_align;
-	return T_align_size < _T_size ? T_align_size_plus1 : T_align_size;
-}
 
 template<typename Callable>
 #if defined (USE_FCONTEXT)
@@ -625,7 +615,7 @@ inline void create_detached_coroutine(Callable callable)
 	entry_point_type entry_func = & __coroutine_entry_point<NoRefCallableType>;
 
 	new_fiber_ctx->ctx.sp = stack_top;
-	zcontext_setup(&new_fiber_ctx->ctx, reinterpret_cast<void (*)(void*)>(entry_func), new_fiber_ctx);
+	new_fiber_ctx->ctx = zcontext_setup(new_fiber_ctx->sp, sizeof(new_fiber_ctx->sp), reinterpret_cast<void (*)(void*)>(entry_func), new_fiber_ctx);
 	zcontext_resume_coro(new_fiber_ctx->ctx);
 
 #elif defined(USE_WINFIBER)

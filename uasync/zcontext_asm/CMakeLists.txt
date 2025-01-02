@@ -10,3 +10,5 @@ else()
         add_library(zcontext zcontext_x86_64.S)
     endif()
 endif()
+
+target_include_directories(zcontext INTERFACE .)

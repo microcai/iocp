@@ -163,5 +163,5 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     set_property(SOURCE ${ASM_SOURCES} APPEND PROPERTY COMPILE_OPTIONS "-x" "assembler-with-cpp")
 endif()
 
-
 add_library(fcontext ${ASM_SOURCES})
+target_include_directories(fcontext INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
