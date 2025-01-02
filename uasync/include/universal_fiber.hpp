@@ -141,11 +141,11 @@ inline static auto move_or_copy(T&& arg)
 	}
 }
 
-template<typename T>
+template<typename T, size_t alignas_ = 0>
 inline consteval std::size_t stack_align_space()
 {
 	auto constexpr _T_size = std::max(sizeof(T), alignof(T));
-	auto constexpr _T_align_or_stack_align = std::max((std::size_t)32, alignof(T));
+	auto constexpr _T_align_or_stack_align = std::max((std::size_t)32, std::max(alignof(T), alignas_));
 
 	auto constexpr T_align_size_plus1 = (_T_size/_T_align_or_stack_align + 1)*_T_align_or_stack_align;
 	auto constexpr T_align_size = (_T_size/_T_align_or_stack_align)*_T_align_or_stack_align;
@@ -159,16 +159,19 @@ struct FiberContext
 	using context_type = ucontext_t;
 #elif defined (USE_ZCONTEXT)
 	using context_type = zcontext_t;
-#else
-	using context_type = char;
 #endif
 
 	char sp[
-		65536 - stack_align_space<unsigned long long>() - stack_align_space<context_type>()
+		65536 - stack_align_space<unsigned long long, 64>()
+#if defined (USE_UCONTEXT) || defined (USE_ZCONTEXT)
+		- stack_align_space<context_type>()
+#endif
 	];
 
-	alignas(32) unsigned long long sp_top[1]; // 栈顶
+	alignas(64) unsigned long long sp_top[8]; // 栈顶
+#if defined (USE_UCONTEXT) || defined (USE_ZCONTEXT)
 	alignas(32) context_type ctx;
+#endif
 };
 
 struct FiberContextAlloctor
