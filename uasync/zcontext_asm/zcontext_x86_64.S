@@ -116,10 +116,10 @@ zcontext_swap: // zcontext_swap(zcontext_t* from, zcontext_t* to, swap_hook_func
     mov (%rsi), %rsp
 
 //  调用 hook_function(argument)
-    test %rdx, %rdx
-    je skip_call
     mov %rcx, %rdi
     mov %rcx, %rax
+    test %rdx, %rdx
+    je skip_call
     call * %rdx
 skip_call:
 //  恢复浮点上下文
