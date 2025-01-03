@@ -203,7 +203,13 @@ struct FiberContextAlloctor
 // global thread_local data for coroutine usage
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 #if defined(USE_FCONTEXT)
-inline thread_local fcontext_t __current_yield_fcontext;
+
+inline fcontext_t& __current_yield_fcontext()
+{
+	static thread_local fcontext_t ___current_yield_fcontext;
+	return ___current_yield_fcontext;
+}
+
 #elif  defined (USE_ZCONTEXT)
 inline thread_local zcontext_t* __current_yield_zctx = NULL;
 #elif defined(USE_WINFIBER)
@@ -219,16 +225,16 @@ inline thread_local std::function<void()> __current_yield_ctx_hook = NULL;
 
 inline transfer_t on_resume_fcontext(transfer_t caller)
 {
-	__current_yield_fcontext = caller.fctx;
+	__current_yield_fcontext() = caller.fctx;
 	return caller;
 }
 
 // run the "to" coro, and pass arg to it.
 inline void fcontext_resume_coro(fcontext_t const to, void* arg = 0)
 {
-	auto old = __current_yield_fcontext;
+	auto old = __current_yield_fcontext();
 	auto jmp_result = ontop_fcontext(to, arg, on_resume_fcontext);
-	__current_yield_fcontext = old;
+	__current_yield_fcontext() = old;
 }
 
 inline transfer_t on_suspend_fcontext(transfer_t caller)
@@ -243,7 +249,7 @@ inline transfer_t on_suspend_fcontext(transfer_t caller)
 // transfer control back to main thread. called by coro
 inline void fcontext_suspend_coro(FiberOVERLAPPED& ov)
 {
-	ontop_fcontext(__current_yield_fcontext, static_cast<void*>(&ov), on_suspend_fcontext);
+	ontop_fcontext(__current_yield_fcontext(), static_cast<void*>(&ov), on_suspend_fcontext);
 }
 
 #elif  defined (USE_ZCONTEXT)
@@ -340,7 +346,7 @@ inline void winfiber_suspend_coro(FiberOVERLAPPED& ov)
 // wait for overlapped to became complete. return NumberOfBytes
 inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 {
-	assert(__current_yield_fcontext && "get_overlapped_result should be called by a Fiber!");
+	assert(__current_yield_fcontext() && "get_overlapped_result should be called by a Fiber!");
 	if (!ov.ready.test_and_set())
 	{
 		fcontext_suspend_coro(ov);
@@ -483,7 +489,7 @@ static inline void __coroutine_entry_point(LPVOID param)
 {
 
 #ifdef USE_FCONTEXT
-	__current_yield_fcontext = arg.fctx;
+	__current_yield_fcontext() = arg.fctx;
 	FiberContext* ctx = reinterpret_cast<FiberContext*>(arg.data);
 #endif
 
@@ -528,7 +534,7 @@ static inline void __coroutine_entry_point(LPVOID param)
 		return caller;
 	};
 
-	ontop_fcontext(__current_yield_fcontext, ctx, on_free_fcontext);
+	ontop_fcontext(__current_yield_fcontext(), ctx, on_free_fcontext);
 #elif defined (USE_UCONTEXT)
 	__current_yield_ctx_hook = [ctx]()
 	{
