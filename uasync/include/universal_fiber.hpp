@@ -152,8 +152,15 @@ inline consteval std::size_t stack_align_space()
 	return T_align_size < _T_size ? T_align_size_plus1 : T_align_size;
 }
 
+template<typename T, size_t alignas_ = 0>
+struct object_space
+{
+	static constexpr size_t size = stack_align_space<T, alignas_>();
+};
 
-struct FiberContext
+
+template<size_t StackSize = 65536>
+struct FiberContextBase
 {
 #if defined (USE_UCONTEXT)
 	using context_type = ucontext_t;
@@ -162,17 +169,19 @@ struct FiberContext
 #endif
 
 	char sp[
-		65536 - stack_align_space<unsigned long long, 64>()
+		StackSize - object_space<unsigned long long[8], 64>::size
 #if defined (USE_UCONTEXT) || defined (USE_ZCONTEXT)
-		- stack_align_space<context_type>()
+		- object_space<context_type, 64>::size
 #endif
 	];
 
 	alignas(64) unsigned long long sp_top[8]; // 栈顶
 #if defined (USE_UCONTEXT) || defined (USE_ZCONTEXT)
-	alignas(32) context_type ctx;
+	alignas(64) context_type ctx;
 #endif
 };
+
+using FiberContext = FiberContextBase<>;
 
 struct FiberContextAlloctor
 {
