@@ -1,12 +1,32 @@
 
 #ifdef _WIN32
 
+#define ARG1_REG %rcx
+#define ARG2_REG %rdx
+#define ARG3_REG %r8
+#define ARG4_REG %r9
+
+#else
+
+#define ARG1_REG %rdi
+#define ARG2_REG %rsi
+#define ARG3_REG %rdx
+#define ARG4_REG %rcx
+
+#endif
+
+#ifdef _WIN32
+
 .align 16
+.text
+.p2align 4,,15
 .global zcontext_swap
+.section .text.zcontext_swap, "x"
 // RCX = to save sp to
 // RDX = to load sp from
-// R8 = argument
-zcontext_swap: // void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* argument)
+// R8 = hook_function
+// R9 = argument
+zcontext_swap: // zcontext_swap(zcontext_t* from, zcontext_t* to, swap_hook_function_t hook_function, void* argument);
 // 保存非易失性寄存器
     push %rbp
     push %rbx
@@ -38,16 +58,17 @@ zcontext_swap: // void* zcontext_swap(zcontext_t* from, zcontext_t* to, void* ar
     mov (%rdx), %rsp
 
 //  执行 hook 函数.
-    mov %r9, %rcx
-    mov %r9, %rax
-    test %r8, %r8
-    je call_skip
+    mov ARG4_REG, %rax
+    test ARG3_REG, ARG3_REG
+    je 1f
     sub $32, %rsp
-    call * %r8
+    mov ARG4_REG, ARG1_REG
+    mov ARG4_REG, %r12 // 同时兼容 preserve_none 调用约定 的 hook
+    call * ARG3_REG
     add $32, %rsp
 
 //  恢复浮点上下文
-call_skip:
+1:
     fldcw   0x0(%rsp)
     ldmxcsr 0x8(%rsp)
     movaps 0x10(%rsp), %xmm15
@@ -76,7 +97,10 @@ call_skip:
     ret
 
 .align 16
+.text
+.p2align 4,,15
 .global zcontext_entry_point
+.section .text.zcontext_entry_point, "x"
 zcontext_entry_point:
     mov %rax, %r12
     sub $0x20, %rsp
@@ -89,14 +113,17 @@ zcontext_entry_point:
     pop %rcx
     mov %r12, %rdx
     sub $0x20, %rsp
+
     call *%rbx
     call ExitProcess
     hlt
 
-#else
+#else // _WIN32
 
 .align 16
 .global zcontext_swap
+.section .text.zcontext_swap, "x"
+
 // RDI = to save sp to
 // RSI = to load sp from
 // RDX = hook_function
@@ -115,16 +142,16 @@ zcontext_swap: // zcontext_swap(zcontext_t* from, zcontext_t* to, swap_hook_func
     stmxcsr 16(%rsp)
 
 //  切换栈指针
-    mov %rsp, (%rdi)
-    mov (%rsi), %rsp
+    mov %rsp, (ARG1_REG)
+    mov (ARG2_REG), %rsp
 
 //  调用 hook_function(argument)
-    mov %rcx, %rdi
-    mov %rcx, %rax
-    test %rdx, %rdx
-    je skip_call
-    call * %rdx
-skip_call:
+    mov ARG4_REG, ARG1_REG
+    mov ARG4_REG, %rax
+    test ARG3_REG, ARG3_REG
+    je 1f
+    call * ARG3_REG
+1:
 //  恢复浮点上下文
     fldcw   8(%rsp)
     ldmxcsr 16(%rsp)
@@ -142,6 +169,7 @@ skip_call:
 
 .align 16
 .global zcontext_entry_point
+.section .text.zcontext_entry_point, "x"
 zcontext_entry_point:
     pop %rbx
     pop %rdi
@@ -152,3 +180,34 @@ zcontext_entry_point:
 
 #endif
 
+
+.align 16
+.text
+.p2align 4,,15
+.global zcontext_swap_preserve_none
+.section .text.zcontext_swap_preserve_none, "x"
+// r12 = to save sp to
+// r13 = to load sp from
+// r14 = hook_function
+// r15 = argument
+zcontext_swap_preserve_none: // zcontext_swap2(zcontext_t* from, zcontext_t* to, swap_hook_function_t hook_function, void* argument);
+    // 保存frame寄存器
+    push %rbp
+
+    // 切换栈指针
+    mov %rsp, (%r12)
+    mov (%r13), %rsp
+
+    //  恢复 frame 寄存器
+    pop %rbp
+
+    // if(hook_function) hook_function(argument);
+    mov %r15, %rax
+    mov %r15, ARG1_REG
+    mov %r15, %r12 // 同时兼容 preserve_none 调用约定 的 hook
+    test %r14, %r14
+    jne 1f
+    // 返回 argument
+    pop %r14 ; // pop+jump = ret !
+1:
+    jmp * %r14 // tail call optimization

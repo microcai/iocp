@@ -285,7 +285,7 @@ inline void zcontext_resume_coro(zcontext_t& target)
 
 inline void zcontext_suspend_coro(FiberOVERLAPPED& ov)
 {
-	auto set_resume_flag = [](void* arg)
+	auto set_resume_flag = [](void* arg) ATTRIBUTE_PRESERVE_NONE
 	{
 		reinterpret_cast<FiberOVERLAPPED*>(arg)->resume_flag.test_and_set();
 		return arg;
@@ -557,10 +557,10 @@ static inline void __coroutine_entry_point(LPVOID param)
 	};
 	setcontext(__current_yield_ctx);
 #elif defined (USE_ZCONTEXT)
-	auto stack_cleaner = [](void* __please_delete_me) -> void*
+	auto stack_cleaner = [](void* __please_delete_me) ATTRIBUTE_PRESERVE_NONE
 	{
 		FiberContextAlloctor{}.deallocate((FiberContext<Callable>*)__please_delete_me);
-		return 0;
+		return (void*)nullptr;
 	};
 
 	zcontext_swap(&ctx->ctx.ctx, __current_yield_zctx, (zcontext_swap_hook_function_t )stack_cleaner , ctx);
