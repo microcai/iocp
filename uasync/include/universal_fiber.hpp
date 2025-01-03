@@ -158,48 +158,59 @@ struct object_space
 	static constexpr size_t size = stack_align_space<T, alignas_>();
 };
 
+template<size_t StackSize>
+struct FiberStack
+{
+	char sp[StackSize];
+};
 
-template<size_t StackSize = 65536>
-struct FiberContextBase
+struct FiberSwapContext
 {
 #if defined (USE_UCONTEXT)
-	using context_type = ucontext_t;
+	ucontext_t ctx;
 #elif defined (USE_ZCONTEXT)
-	using context_type = zcontext_t;
-#endif
-
-	char sp[
-		StackSize - object_space<unsigned long long[8], 64>::size
-#if defined (USE_UCONTEXT) || defined (USE_ZCONTEXT)
-		- object_space<context_type, 64>::size
-#endif
-	];
-
-	alignas(64) unsigned long long sp_top[8]; // 栈顶
-#if defined (USE_UCONTEXT) || defined (USE_ZCONTEXT)
-	alignas(64) context_type ctx;
+	zcontext_t ctx;
+#else
+	char ctx[16];
 #endif
 };
 
-using FiberContext = FiberContextBase<>;
+template<typename Callable>
+struct FiberCallableArgument
+{
+	alignas(64) char callable_storage[sizeof(Callable)];
+};
+
+template<typename Callable>
+struct FiberContext
+{
+	FiberStack<65536 - object_space<FiberCallableArgument<Callable>, 64>::size - object_space<FiberSwapContext, 64>::size > sp;
+
+	FiberCallableArgument<Callable> callable;
+
+	FiberSwapContext ctx;
+};
 
 struct FiberContextAlloctor
 {
-	FiberContext* allocate()
+	template<typename Callable>
+	FiberContext<Callable>* allocate()
 	{
+		static_assert(sizeof(FiberContext<Callable>) == 65536, "FiberContext must be 64KiB size");
 #ifdef __linux__
-		return (FiberContext*) mmap(0, sizeof(FiberContext), PROT_READ|PROT_WRITE, MAP_GROWSDOWN|MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0);
+		return (FiberContext<Callable>*) mmap(0, sizeof(FiberContext<Callable>), PROT_READ|PROT_WRITE, MAP_GROWSDOWN|MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0);
 #elif defined (_WIN32)
-		return (FiberContext*) VirtualAlloc(0, sizeof(FiberContext), MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
+		return (FiberContext<Callable>*) VirtualAlloc(0, sizeof(FiberContext<Callable>), MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
 #else
-		return (FiberContext*) malloc(sizeof(FiberContext));
+		return (FiberContext<Callable>*) malloc(sizeof(FiberContext<Callable>));
 #endif
 	}
 
-	void deallocate(FiberContext* ctx)
+	template<typename Callable>
+	void deallocate(FiberContext<Callable>* ctx)
 	{
 #ifdef __linux__
-		munmap(ctx, sizeof(FiberContext));
+		munmap(ctx, sizeof(FiberContext<Callable>));
 #elif defined (_WIN32)
 		VirtualFree(ctx, 0, MEM_RELEASE);
 #else
@@ -491,7 +502,7 @@ template<typename Callable>
 #if defined (USE_FCONTEXT)
 inline void __coroutine_entry_point(transfer_t arg)
 #elif defined (USE_UCONTEXT) || defined (USE_ZCONTEXT)
-static inline void __coroutine_entry_point(FiberContext* ctx)
+static inline void __coroutine_entry_point(FiberContext<Callable>* ctx)
 #elif defined (USE_WINFIBER)
 static inline void __coroutine_entry_point(LPVOID param)
 #endif
@@ -499,7 +510,7 @@ static inline void __coroutine_entry_point(LPVOID param)
 
 #ifdef USE_FCONTEXT
 	__current_yield_fcontext() = arg.fctx;
-	FiberContext* ctx = reinterpret_cast<FiberContext*>(arg.data);
+	FiberContext<Callable>* ctx = reinterpret_cast<FiberContext<Callable>*>(arg.data);
 #endif
 
 #if defined (USE_WINFIBER)
@@ -511,12 +522,7 @@ static inline void __coroutine_entry_point(LPVOID param)
 	Callable* callable_ptr = new (callable_storage) Callable(std::move(*callable_ptr_unstable));
 	// now, param is invalid. proceed without touching param.
 #else
-
-	auto stack_top = reinterpret_cast<char*>(ctx->sp_top);
-	// reserve space for callable
-	stack_top -= stack_align_space<Callable>();
-
-	auto callable_ptr = reinterpret_cast<Callable*>(stack_top);
+	Callable* callable_ptr = reinterpret_cast<Callable*>(&ctx->callable);
 #endif
 
 	{
@@ -539,7 +545,7 @@ static inline void __coroutine_entry_point(LPVOID param)
 #if defined (USE_FCONTEXT)
 	auto on_free_fcontext = [](transfer_t caller)
 	{
-		FiberContextAlloctor{}.deallocate(reinterpret_cast<FiberContext*>(caller.data));
+		FiberContextAlloctor{}.deallocate(reinterpret_cast<FiberContext<Callable>*>(caller.data));
 		return caller;
 	};
 
@@ -553,11 +559,11 @@ static inline void __coroutine_entry_point(LPVOID param)
 #elif defined (USE_ZCONTEXT)
 	auto stack_cleaner = [](void* __please_delete_me) -> void*
 	{
-		FiberContextAlloctor{}.deallocate((FiberContext*)__please_delete_me);
+		FiberContextAlloctor{}.deallocate((FiberContext<Callable>*)__please_delete_me);
 		return 0;
 	};
 
-	zcontext_swap(&ctx->ctx, __current_yield_zctx, (zcontext_swap_hook_function_t )stack_cleaner , ctx);
+	zcontext_swap(&ctx->ctx.ctx, __current_yield_zctx, (zcontext_swap_hook_function_t )stack_cleaner , ctx);
 #elif defined (USE_WINFIBER)
 
 	auto to_be_deleted = GetCurrentFiber();
@@ -578,17 +584,15 @@ inline void create_detached_coroutine(Callable callable)
 	using NoRefCallableType = std::decay_t<Callable>;
 
 #ifndef USE_WINFIBER
-	FiberContext* new_fiber_ctx = FiberContextAlloctor{}.allocate();
+	FiberContext<NoRefCallableType>* new_fiber_ctx = FiberContextAlloctor{}.allocate<NoRefCallableType>();
 
-	auto stack_top = reinterpret_cast<char*>(new_fiber_ctx->sp_top);
-	// reserve space for callable
-	stack_top -= stack_align_space<NoRefCallableType>();
+	auto stack_top = (void*)&(new_fiber_ctx->callable);
 
 	// placement new the callable into the stack
 	// move/or copy construct
 	new (stack_top) NoRefCallableType{move_or_copy(std::move(callable))};
 
-	auto stack_size = (stack_top - reinterpret_cast<char*>(new_fiber_ctx->sp));
+	auto stack_size = sizeof(new_fiber_ctx->sp);
 
 #endif
 
@@ -599,10 +603,10 @@ inline void create_detached_coroutine(Callable callable)
 
 #	elif defined (USE_UCONTEXT)
 
-	ucontext_t* new_ctx = & new_fiber_ctx->ctx;
+	ucontext_t* new_ctx = & new_fiber_ctx->ctx.ctx;
 
 	getcontext(new_ctx);
-	new_ctx->uc_stack.ss_sp = stack_top;
+	new_ctx->uc_stack.ss_sp = &new_fiber_ctx->sp;
 	new_ctx->uc_stack.ss_flags = 0;
 	new_ctx->uc_stack.ss_size = stack_size;
 	new_ctx->uc_link = nullptr;
@@ -614,12 +618,12 @@ inline void create_detached_coroutine(Callable callable)
 #elif defined (USE_ZCONTEXT)
 
 	// setup a new stack, and jump to __coroutine_entry_point
-	typedef void(*entry_point_type)(FiberContext*);
+	typedef void(*entry_point_type)(FiberContext<NoRefCallableType>*);
 
 	entry_point_type entry_func = & __coroutine_entry_point<NoRefCallableType>;
 
-	new_fiber_ctx->ctx = zcontext_setup(new_fiber_ctx->sp, stack_size, reinterpret_cast<void (*)(void*)>(entry_func), new_fiber_ctx);
-	zcontext_resume_coro(new_fiber_ctx->ctx);
+	new_fiber_ctx->ctx.ctx = zcontext_setup(&new_fiber_ctx->sp, stack_size, reinterpret_cast<void (*)(void*)>(entry_func), new_fiber_ctx);
+	zcontext_resume_coro(new_fiber_ctx->ctx.ctx);
 
 #elif defined(USE_WINFIBER)
 
