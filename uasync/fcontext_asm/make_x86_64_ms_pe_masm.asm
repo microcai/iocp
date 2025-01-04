@@ -87,7 +87,7 @@ EXTERN  _exit:PROC
 .code
 
 ; generate function table entry in .pdata and unwind information in
-make_fcontext PROC  FRAME
+make_fcontext PROC FRAME
     ; .xdata for a function's structured exception handling unwind behavior
     .endprolog
 
@@ -141,7 +141,7 @@ make_fcontext PROC  FRAME
     ; compute abs address of label finish
     lea  rcx, finish
     ; save address of finish as return-address for context-function in RBP
-    ; will be entered after context-function returns 
+    ; will be entered after context-function returns
     mov  [rax+0108h], rcx
 
     ret ; return pointer to context-data
