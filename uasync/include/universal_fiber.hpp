@@ -71,6 +71,45 @@ using namespace zcontext;
 #include <tuple>
 #include <functional>
 
+template<typename T>
+inline static auto move_or_copy(T&& arg)
+{
+	if constexpr (std::is_move_constructible_v<T>)
+	{
+		return static_cast<T&&>(arg);
+	}
+	else
+	{
+		return static_cast<const T&>(arg);
+	}
+}
+
+template<typename... Args>
+constexpr inline std::size_t max_of(std::size_t a, std::size_t b)
+{
+	return std::max(a, b);
+}
+
+template<typename... Args>
+constexpr inline std::size_t max_of(std::size_t number0, Args... numbers)
+{
+	return std::max<unsigned long>(number0, max_of(numbers...));
+}
+
+template<typename T, size_t alignas_ = 0>
+inline constexpr std::size_t stack_align_space()
+{
+	auto constexpr _T_size = std::max(sizeof(T), alignof(T));
+	auto constexpr _T_align_or_stack_align = max_of((std::size_t)32, alignof(T), alignas_);
+	return (_T_size < _T_align_or_stack_align) ? _T_align_or_stack_align : _T_size + ((_T_size % _T_align_or_stack_align)&1)*_T_align_or_stack_align;
+}
+
+template<typename T, size_t alignas_ = 0>
+struct object_space
+{
+	static constexpr size_t size = stack_align_space<T, alignas_>();
+};
+
 typedef struct FiberOVERLAPPED
 {
 	OVERLAPPED ov;
@@ -128,36 +167,6 @@ typedef struct FiberOVERLAPPED
 
 } FiberOVERLAPPED;
 
-template<typename T>
-inline static auto move_or_copy(T&& arg)
-{
-	if constexpr (std::is_move_constructible_v<T>)
-	{
-		return static_cast<T&&>(arg);
-	}
-	else
-	{
-		return static_cast<const T&>(arg);
-	}
-}
-
-template<typename T, size_t alignas_ = 0>
-inline consteval std::size_t stack_align_space()
-{
-	auto constexpr _T_size = std::max(sizeof(T), alignof(T));
-	auto constexpr _T_align_or_stack_align = std::max((std::size_t)32, std::max(alignof(T), alignas_));
-
-	auto constexpr T_align_size_plus1 = (_T_size/_T_align_or_stack_align + 1)*_T_align_or_stack_align;
-	auto constexpr T_align_size = (_T_size/_T_align_or_stack_align)*_T_align_or_stack_align;
-	return T_align_size < _T_size ? T_align_size_plus1 : T_align_size;
-}
-
-template<typename T, size_t alignas_ = 0>
-struct object_space
-{
-	static constexpr size_t size = stack_align_space<T, alignas_>();
-};
-
 template<size_t StackSize>
 struct FiberStack
 {
@@ -181,10 +190,12 @@ struct FiberCallableArgument
 	alignas(64) char callable_storage[sizeof(Callable)];
 };
 
+inline constexpr std::size_t FiberContextSize = 65536;
+
 template<typename Callable>
 struct FiberContext
 {
-	FiberStack<65536 - object_space<FiberCallableArgument<Callable>, 64>::size - object_space<FiberSwapContext, 64>::size > sp;
+	FiberStack<FiberContextSize - object_space<FiberCallableArgument<Callable>, 64>::size - object_space<FiberSwapContext, 64>::size > sp;
 
 	FiberCallableArgument<Callable> callable;
 
@@ -196,7 +207,7 @@ struct FiberContextAlloctor
 	template<typename Callable>
 	FiberContext<Callable>* allocate()
 	{
-		static_assert(sizeof(FiberContext<Callable>) == 65536, "FiberContext must be 64KiB size");
+		static_assert(sizeof(FiberContext<Callable>) == FiberContextSize, "FiberContext must be 64KiB size");
 #ifdef __linux__
 		return (FiberContext<Callable>*) mmap(0, sizeof(FiberContext<Callable>), PROT_READ|PROT_WRITE, MAP_GROWSDOWN|MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0);
 #elif defined (_WIN32)
