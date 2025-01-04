@@ -23,6 +23,7 @@ typedef struct _zcontext_t{
     void* sp;// pointer to active stack buttom
 }zcontext_t;
 
+typedef void* (*zcontext_swap_hook_function_cdecl_t)(void*);
 typedef void* (*zcontext_swap_hook_function_t)(void*) ATTRIBUTE_PRESERVE_NONE;
 
 // 使用本 API 进行协程切换。
@@ -32,6 +33,7 @@ typedef void* (*zcontext_swap_hook_function_t)(void*) ATTRIBUTE_PRESERVE_NONE;
 #if defined (HAS_CC_PRESERVE_NONE)
 
 	__attribute__((preserve_none))
+        __attribute__((external_source_symbol(language="asm")))
 	void* zcontext_swap(zcontext_t* from, const zcontext_t* to, zcontext_swap_hook_function_t hook_function, void* argument) asm ("zcontext_swap_preserve_none");
 #else
 

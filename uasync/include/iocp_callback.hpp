@@ -54,5 +54,5 @@ inline void process_callback_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWORD
 
 inline void bind_callback_iocp(HANDLE file, HANDLE iocp_handle, DWORD = 0, DWORD = 0)
 {
-    CreateIoCompletionPort(file, iocp_handle, (ULONG_PTR) (void*) &process_callback_overlapped_event, 0);
+    CreateIoCompletionPort(file, iocp_handle, (ULONG_PTR) (iocp::overlapped_proc_func) &process_callback_overlapped_event, 0);
 }

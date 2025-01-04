@@ -463,7 +463,7 @@ inline void process_stack_full_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWO
 
 inline auto bind_stackfull_iocp(HANDLE file, HANDLE iocp_handle, DWORD = 0, DWORD = 0)
 {
-    return CreateIoCompletionPort(file, iocp_handle, (ULONG_PTR) (void*) &process_stack_full_overlapped_event, 0);
+    return CreateIoCompletionPort(file, iocp_handle, (ULONG_PTR) (iocp::overlapped_proc_func) &process_stack_full_overlapped_event, 0);
 }
 
 // 执行这个，可以保证 协程被 IOCP 线程调度. 特别是 一个线程一个 IOCP 的模式下特有用
