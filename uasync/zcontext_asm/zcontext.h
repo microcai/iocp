@@ -8,11 +8,33 @@
 extern "C" namespace zcontext  {
 #endif
 
-#if defined (__x86_64__) && defined (__clang_major__)
-	#if   __clang_major__ >= 19
-		#define  HAS_CC_PRESERVE_NONE
-		#define  ATTRIBUTE_PRESERVE_NONE [[clang::preserve_none]]
+#if defined (__x86_64__)
+	#if defined(__clang_major__) &&  (__clang_major__ +0) >= 19
+		#define HAS_CC_PRESERVE_NONE
+		#define ATTRIBUTE_PRESERVE_NONE [[clang::preserve_none]]
+		#define _CALL_CONV_X64_PRESERVE_NONE 1
 	#endif
+
+	#ifndef _CALL_CONV_X64_PRESERVE_NONE
+		#if defined(_WIN32)
+			#define _CALL_CONV_X64_MSABI 1
+		#else
+			#define _CALL_CONV_X64_SYSV 1
+		#endif
+	#endif
+
+#elif defined(_M_X64)
+	#define _CALL_CONV_X64_MSABI 1
+#elif defined(__aarch64__)
+
+	#if defined(__clang_major__) &&  (__clang_major__ +0) >= 19 && 0
+		#define HAS_CC_PRESERVE_NONE
+		#define ATTRIBUTE_PRESERVE_NONE [[clang::preserve_none]]
+		#define _CALL_CONV_AAPCS64_PRESERVE_NONE 1
+	#else
+		#define _CALL_CONV_AAPCS64 1
+	#endif
+
 #endif
 
 #ifndef ATTRIBUTE_PRESERVE_NONE
@@ -20,7 +42,7 @@ extern "C" namespace zcontext  {
 #endif
 
 typedef struct _zcontext_t{
-    void* sp;// pointer to active stack buttom
+	void* sp;// pointer to active stack buttom
 }zcontext_t;
 
 typedef void* (*zcontext_swap_hook_function_cdecl_t)(void*);
@@ -33,7 +55,6 @@ typedef void* (*zcontext_swap_hook_function_t)(void*) ATTRIBUTE_PRESERVE_NONE;
 #if defined (HAS_CC_PRESERVE_NONE)
 
 	__attribute__((preserve_none))
-        __attribute__((external_source_symbol(language="asm")))
 	__attribute__((blocking))
 	void* zcontext_swap(zcontext_t* from, const zcontext_t* to, zcontext_swap_hook_function_t hook_function, void* argument) asm ("zcontext_swap_preserve_none");
 #else
@@ -48,56 +69,55 @@ void* zcontext_entry_point(); // from ASM code
 // 创建后，使用 zcontext_swap 切换.
 inline zcontext_t zcontext_setup(void* stack_mem, size_t stack_size, void (*func)(void*arg), void* argument)
 {
-    struct startup_stack_structure
-    {
-#if defined(__aarch64__)
-        void* generial_reg[18];
-        void* reg_fp;
-        void* ret_address;
-        void* param1;
-        void* param2;
-        void* padding[2];
-#elif defined (_M_X64) && defined (_WIN32)
-#ifdef HAS_CC_PRESERVE_NONE
-        void* padd;
-#else
-        void* fc_x87_cw;
-        void* fc_mxcsr;
-        void* mmx_reg[20];
-        void* padd;
-        void* general_reg[8];
+	struct startup_stack_structure
+	{
+#if defined(_CALL_CONV_AAPCS64)
+		void* generial_reg[18];
+		void* reg_fp;
+		void* ret_address;
+		void* param1;
+		void* param2;
+		void* padding[2];
+#elif defined(_CALL_CONV_X64_PRESERVE_NONE)
+		void* reg_rbp;
+		void* ret_address;
+		void* param1;
+		void* param2;
+		void* padding[2];
+#elif defined (_CALL_CONV_X64_MSABI)
+		void* fc_x87_cw;
+		void* fc_mxcsr;
+		void* mmx_reg[20];
+		void* padd;
+		void* general_reg[8];
+		void* ret_address;
+		void* param1;
+		void* param2;
+		void* padding[2];
+#elif defined (_CALL_CONV_X64_SYSV)
+		void* padd;
+		void* general_reg[8];
+		void* ret_address;
+		void* param1;
+		void* param2;
 #endif
-        void* ret_address;
-        void* param1;
-        void* param2;
-        void* padding[2];
-#elif defined (__x86_64__)
+	};
 
-        void* padd;
-#ifndef HAS_CC_PRESERVE_NONE
-        void* general_reg[8];
-#endif
-        void* ret_address;
-        void* param1;
-        void* param2;
-#endif
-    };
+	zcontext_t target;
 
-    zcontext_t target;
+	char* sp = reinterpret_cast<char*>(stack_mem) + stack_size - sizeof(startup_stack_structure);;
 
-    char* sp = reinterpret_cast<char*>(stack_mem) + stack_size - sizeof(startup_stack_structure);;
+	target.sp = sp;
 
-    target.sp = sp;
+	auto startup_stack = reinterpret_cast<startup_stack_structure*>(sp);
 
-    auto startup_stack = reinterpret_cast<startup_stack_structure*>(sp);
+	memset(sp, 0, sizeof(startup_stack_structure));
 
-    memset(sp, 0, sizeof(startup_stack_structure));
+	startup_stack->ret_address = (void*) zcontext_entry_point;
+	startup_stack->param1 = (void*) func;
+	startup_stack->param2 = argument;
 
-    startup_stack->ret_address = (void*) zcontext_entry_point;
-    startup_stack->param1 = (void*) func;
-    startup_stack->param2 = argument;
-
-    return target;
+	return target;
 }
 
 #ifdef __cplusplus
