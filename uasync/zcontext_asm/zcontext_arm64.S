@@ -31,13 +31,11 @@ zcontext_swap: // zcontext_swap(zcontext_t* from, zcontext_t* to, swap_hook_func
 
 //  调用 hook_function(argument)
     mov x0, x3
-    cbz	x2, skip_call
+    cbz	x2, 1f
     sub sp, sp, #0x10
     blr x2
     add sp, sp, #0x10
-
-skip_call:
-
+1:
     //  恢复浮点上下文
     ldp  d8,  d9,  [sp, #0x00]
     ldp  d10, d11, [sp, #0x10]
@@ -65,3 +63,35 @@ zcontext_entry_point:
     ldp x2, x0, [sp, #0x00]
     blr x2
     bl _exit
+
+.align 16
+.global zcontext_swap_preserve_none
+// x20 = to save sp to
+// x21 = to load sp from
+// x22 = hook_function
+// x23 = argument
+zcontext_swap_preserve_none:
+    sub  sp, sp, #0x10
+//  保存浮点上下文
+//  保存非易失性寄存器
+    stp  fp,  lr,  [sp, #0x00]
+
+//  切换栈指针
+    mov x10, sp
+    str x10, [x20]
+
+    ldr x10, [x21]
+    mov sp, x10
+
+//  调用 hook_function(argument)
+    mov x0, x23
+    cbz	x22, 1f // 如无 hook ，跳过
+    mov x20, x23
+    blr x22
+1:
+    //  恢复非易失性寄存器
+    ldp  fp,  lr,  [sp, #0x00]
+    // 调整栈.
+    add  sp, sp, #0x10
+    // 返回
+    ret

@@ -26,8 +26,7 @@ extern "C" namespace zcontext  {
 #elif defined(_M_X64)
 	#define _CALL_CONV_X64_MSABI 1
 #elif defined(__aarch64__)
-
-	#if defined(__clang_major__) &&  (__clang_major__ +0) >= 19 && 0
+	#if defined(__clang_major__) &&  (__clang_major__ +0) >= 19
 		#define HAS_CC_PRESERVE_NONE
 		#define ATTRIBUTE_PRESERVE_NONE [[clang::preserve_none]]
 		#define _CALL_CONV_AAPCS64_PRESERVE_NONE 1
@@ -71,7 +70,13 @@ inline zcontext_t zcontext_setup(void* stack_mem, size_t stack_size, void (*func
 {
 	struct startup_stack_structure
 	{
-#if defined(_CALL_CONV_AAPCS64)
+#if defined(_CALL_CONV_AAPCS64_PRESERVE_NONE)
+		void* reg_fp;
+		void* ret_address;
+		void* param1;
+		void* param2;
+		void* padding[2];
+#elif defined(_CALL_CONV_AAPCS64)
 		void* generial_reg[18];
 		void* reg_fp;
 		void* ret_address;
