@@ -15,6 +15,11 @@
 
 #endif
 
+#define NONE_PRESERVE_ARG1_REG %r12
+#define NONE_PRESERVE_ARG2_REG %r13
+#define NONE_PRESERVE_ARG3_REG %r14
+#define NONE_PRESERVE_ARG4_REG %r15
+
 #ifdef _WIN32
 
 .align 16
@@ -102,18 +107,17 @@ zcontext_swap: // zcontext_swap(zcontext_t* from, zcontext_t* to, swap_hook_func
 .global zcontext_entry_point
 .section .text.zcontext_entry_point, "x"
 zcontext_entry_point:
-    mov %rax, %r12
+    mov %rax, NONE_PRESERVE_ARG2_REG
     sub $0x20, %rsp
-    lea 0x8(%rsp), %rcx
-    mov $0x8001F, %r8
-    mov %r8, %rdx
+    lea 0x8(%rsp), ARG1_REG
+    mov $0x8001F, %rax
+    mov %rax, ARG2_REG
+    mov %rax, ARG3_REG
     call _controlfp_s
-    add $0x20, %rsp
-    pop %rbx
-    pop %rcx
-    mov %r12, %rdx
-    sub $0x20, %rsp
-
+    mov 0x20(%rsp),%rbx
+    mov NONE_PRESERVE_ARG2_REG, ARG2_REG
+    mov 0x28(%rsp),ARG1_REG
+    mov ARG1_REG, NONE_PRESERVE_ARG1_REG
     call *%rbx
     call ExitProcess
     hlt
@@ -172,8 +176,10 @@ zcontext_swap: // zcontext_swap(zcontext_t* from, zcontext_t* to, swap_hook_func
 .section .text.zcontext_entry_point, "x"
 zcontext_entry_point:
     pop %rbx
-    pop %rdi
-    mov %rax, %rsi
+    pop ARG1_REG
+    mov %rax, ARG2_REG
+    mov %rax, NONE_PRESERVE_ARG2_REG
+    mov ARG1_REG, NONE_PRESERVE_ARG1_REG
     call *%rbx
     call _exit
     hlt
@@ -195,19 +201,19 @@ zcontext_swap_preserve_none: // zcontext_swap2(zcontext_t* from, zcontext_t* to,
     push %rbp
 
     // 切换栈指针
-    mov %rsp, (%r12)
-    mov (%r13), %rsp
+    mov %rsp, (NONE_PRESERVE_ARG1_REG)
+    mov (NONE_PRESERVE_ARG2_REG), %rsp
 
     //  恢复 frame 寄存器
     pop %rbp
 
     // if(hook_function) hook_function(argument);
-    mov %r15, %rax
-    mov %r15, ARG1_REG
-    mov %r15, %r12 // 同时兼容 preserve_none 调用约定 的 hook
-    test %r14, %r14
+    mov NONE_PRESERVE_ARG4_REG, %rax
+    mov NONE_PRESERVE_ARG4_REG, ARG1_REG
+    mov NONE_PRESERVE_ARG4_REG, NONE_PRESERVE_ARG1_REG // 同时兼容 preserve_none 调用约定 的 hook
+    test NONE_PRESERVE_ARG3_REG, NONE_PRESERVE_ARG3_REG
     jne 1f
     // 返回 argument
-    pop %r14 ; // pop+jump = ret !
+    pop NONE_PRESERVE_ARG3_REG ; // pop+jump = ret !
 1:
-    jmp * %r14 // tail call optimization
+    jmp * NONE_PRESERVE_ARG3_REG // tail call optimization

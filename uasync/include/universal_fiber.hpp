@@ -502,6 +502,10 @@ template<typename Callable>
 #if defined (USE_FCONTEXT)
 static inline void __coroutine_entry_point(transfer_t arg)
 #elif defined (USE_UCONTEXT) || defined (USE_ZCONTEXT)
+
+#ifdef USE_ZCONTEXT
+ATTRIBUTE_PRESERVE_NONE
+#endif
 static inline void __coroutine_entry_point(FiberContext<Callable>* ctx)
 #elif defined (USE_WINFIBER)
 static inline void __coroutine_entry_point(LPVOID param)
@@ -618,11 +622,11 @@ inline void create_detached_coroutine(Callable callable)
 #elif defined (USE_ZCONTEXT)
 
 	// setup a new stack, and jump to __coroutine_entry_point
-	typedef void(*entry_point_type)(FiberContext<NoRefCallableType>*);
+	typedef void(*entry_point_type)(FiberContext<NoRefCallableType>*) ATTRIBUTE_PRESERVE_NONE;
 
-	entry_point_type entry_func = & __coroutine_entry_point<NoRefCallableType>;
+	auto entry_func = & __coroutine_entry_point<NoRefCallableType>;
 
-	new_fiber_ctx->ctx.ctx = zcontext_setup(&new_fiber_ctx->sp, stack_size, reinterpret_cast<void (*)(void*)>(entry_func), new_fiber_ctx);
+	new_fiber_ctx->ctx.ctx = zcontext_setup(&new_fiber_ctx->sp, stack_size, reinterpret_cast<zcontext_user_function_t>(entry_func), new_fiber_ctx);
 	zcontext_resume_coro(new_fiber_ctx->ctx.ctx);
 
 #elif defined(USE_WINFIBER)

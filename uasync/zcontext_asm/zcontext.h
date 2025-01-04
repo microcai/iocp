@@ -47,6 +47,9 @@ typedef struct _zcontext_t{
 typedef void* (*zcontext_swap_hook_function_cdecl_t)(void*);
 typedef void* (*zcontext_swap_hook_function_t)(void*) ATTRIBUTE_PRESERVE_NONE;
 
+typedef void (*zcontext_user_function_cdecl_t)(void*);
+typedef void (*zcontext_user_function_t)(void*) ATTRIBUTE_PRESERVE_NONE;
+
 // 使用本 API 进行协程切换。
 // 在 to 协程栈上，会调用 hook_function(argument)
 // 并且将 hook_function 的执行结果 返回给 to 协程
@@ -66,7 +69,7 @@ void* zcontext_entry_point(); // from ASM code
 
 // 创建一个新协程.
 // 创建后，使用 zcontext_swap 切换.
-inline zcontext_t zcontext_setup(void* stack_mem, size_t stack_size, void (*func)(void*arg), void* argument)
+inline zcontext_t zcontext_setup(void* stack_mem, size_t stack_size, zcontext_user_function_t func, void* argument)
 {
 	struct startup_stack_structure
 	{

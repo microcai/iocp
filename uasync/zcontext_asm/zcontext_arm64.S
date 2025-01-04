@@ -61,6 +61,8 @@ zcontext_swap: // zcontext_swap(zcontext_t* from, zcontext_t* to, swap_hook_func
 zcontext_entry_point:
     mov x1, x0
     ldp x2, x0, [sp, #0x00]
+    mov x20, x0
+    mov x21, x1
     blr x2
     bl _exit
 
