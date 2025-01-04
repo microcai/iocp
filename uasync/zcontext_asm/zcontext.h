@@ -11,7 +11,7 @@ extern "C" namespace zcontext  {
 #if defined (__x86_64__) && defined (__clang_major__)
 	#if   __clang_major__ >= 19
 		#define  HAS_CC_PRESERVE_NONE
-                #define  ATTRIBUTE_PRESERVE_NONE [[clang::preserve_none]]
+		#define  ATTRIBUTE_PRESERVE_NONE [[clang::preserve_none]]
 	#endif
 #endif
 
@@ -34,6 +34,7 @@ typedef void* (*zcontext_swap_hook_function_t)(void*) ATTRIBUTE_PRESERVE_NONE;
 
 	__attribute__((preserve_none))
         __attribute__((external_source_symbol(language="asm")))
+	__attribute__((blocking))
 	void* zcontext_swap(zcontext_t* from, const zcontext_t* to, zcontext_swap_hook_function_t hook_function, void* argument) asm ("zcontext_swap_preserve_none");
 #else
 

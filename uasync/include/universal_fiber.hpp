@@ -500,7 +500,7 @@ inline void run_fiber_on_iocp_thread(HANDLE iocp_handle)
 
 template<typename Callable>
 #if defined (USE_FCONTEXT)
-inline void __coroutine_entry_point(transfer_t arg)
+static inline void __coroutine_entry_point(transfer_t arg)
 #elif defined (USE_UCONTEXT) || defined (USE_ZCONTEXT)
 static inline void __coroutine_entry_point(FiberContext<Callable>* ctx)
 #elif defined (USE_WINFIBER)
