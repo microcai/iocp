@@ -101,7 +101,8 @@ inline constexpr std::size_t stack_align_space()
 {
 	auto constexpr _T_size = std::max(sizeof(T), alignof(T));
 	auto constexpr _T_align_or_stack_align = max_of((std::size_t)32, alignof(T), alignas_);
-	return (_T_size < _T_align_or_stack_align) ? _T_align_or_stack_align : _T_size + ((_T_size % _T_align_or_stack_align)&1)*_T_align_or_stack_align;
+	return (_T_size < _T_align_or_stack_align) ? _T_align_or_stack_align :
+		(_T_size % _T_align_or_stack_align) ? ( _T_size / _T_align_or_stack_align * _T_align_or_stack_align + _T_align_or_stack_align)  : _T_size;
 }
 
 template<typename T, size_t alignas_ = 0>
@@ -111,7 +112,7 @@ struct object_space
 };
 
 typedef struct FiberOVERLAPPED : public OVERLAPPED
-{	
+{
 #if defined (USE_FCONTEXT)
 	fcontext_t target;
 #elif defined(USE_WINFIBER)
