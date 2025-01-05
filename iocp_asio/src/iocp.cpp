@@ -888,6 +888,12 @@ IOCP_DECL BOOL ReadFile(
 	if (lpNumberOfBytesRead)
 		*lpNumberOfBytesRead = readed;
 
+	if (readed == 0)
+	{
+		SetLastError(ERROR_HANDLE_EOF);
+		return FALSE;
+	}
+
 	asio_operation* op = new asio_operation;
 	// op->lpCompletionRoutine = lpCompletionRoutine;
 	op->overlapped_ptr = lpOverlapped;
@@ -901,7 +907,7 @@ IOCP_DECL BOOL ReadFile(
 
 	SetLastError(ERROR_IO_PENDING);
 
-	return readed > 0;
+	return FALSE;
 }
 
 IOCP_DECL BOOL WriteFile(
@@ -921,7 +927,7 @@ IOCP_DECL BOOL WriteFile(
 
 	iocp_handle_emu_class* iocp = s->_iocp;
 
-	auto write_ret = write(s->native_handle(), lpBuffer, nNumberOfBytesToWrite);
+	auto write_ret = pwrite(s->native_handle(), lpBuffer, nNumberOfBytesToWrite, lpOverlapped->offset_64);
 
 	if (lpNumberOfBytesWritten)
 		*lpNumberOfBytesWritten = write_ret;
@@ -933,7 +939,7 @@ IOCP_DECL BOOL WriteFile(
 	op->overlapped_ptr = lpOverlapped;
 	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
-	op->last_error = errno;
+	op->last_error = write_ret <0 ? errno : 0;
 	op->NumberOfBytes = write_ret;
 
 	std::scoped_lock<std::mutex> l(iocp->result_mutex);
@@ -941,7 +947,7 @@ IOCP_DECL BOOL WriteFile(
 
 	SetLastError(ERROR_IO_PENDING);
 
-	return write_ret > 0;
+	return FALSE;
 }
 
 asio::io_context SOCKET_emu_class::internal_fake_io_context;

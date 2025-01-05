@@ -165,45 +165,41 @@ public:
 	std::deque<FiberOVERLAPPED*> m_push_awaiting;
 };
 
-struct OverlappedBuffer : public FiberOVERLAPPED
-{
-	IOBuffer buf;
-};
-
 struct FileCopyer
 {
 	uint64_t cur_pos = 0;
 
-	std::array<OverlappedBuffer, PENDING_IO> buffers;
 	FiberChannel<int> chan;
 
 	FileCopyer(HANDLE iocp)
 		: chan(iocp, PENDING_IO)
-	{ 
+	{
 	}
 
-	void buffer_carrier(int buffer_index, HANDLE srcFile, HANDLE destFile, FiberChannel<int>& chan)
+	void buffer_carrier(HANDLE srcFile, HANDLE destFile, FiberChannel<int>& chan)
 	{
 		for (;;)
 		{
-			buffers[buffer_index].set_offset(cur_pos);
+			IOBuffer buf;
+			FiberOVERLAPPED ov;
+			ov.set_offset(cur_pos);
 			cur_pos += BUFFER_SIZE;
 
 			DWORD readbytes = 0;
-			auto ret = ReadFile(srcFile, buffers[buffer_index].buf, BUFFER_SIZE, &readbytes, &buffers[buffer_index]);
-			buffers[buffer_index].last_error = GetLastError();
-			if (!(!ret && buffers[buffer_index].last_error != ERROR_IO_PENDING))
-				readbytes = get_overlapped_result(buffers[buffer_index]);
-			if (buffers[buffer_index].last_error)
+			auto ret = ReadFile(srcFile, buf, BUFFER_SIZE, &readbytes, &ov);
+			ov.last_error = GetLastError();
+			if (!(!ret && ov.last_error != ERROR_IO_PENDING))
+				readbytes = get_overlapped_result(ov);
+			if (ov.last_error)
 			{
 				chan.push(1);
 				return;
 			}
 			DWORD written = 0;
-			ret = WriteFile(destFile, buffers[buffer_index].buf, (readbytes + PageSize - 1) & ~(PageSize - 1), &written, &buffers[buffer_index]);
-			buffers[buffer_index].last_error = GetLastError();
-			if (!(!ret && buffers[buffer_index].last_error != ERROR_IO_PENDING))
-				readbytes = get_overlapped_result(buffers[buffer_index]);
+			ret = WriteFile(destFile, buf, (readbytes + PageSize - 1) & ~(PageSize - 1), &written, &ov);
+			ov.last_error = GetLastError();
+			if (!(!ret && ov.last_error != ERROR_IO_PENDING))
+				written = get_overlapped_result(ov);
 		}
 	}
 
@@ -212,7 +208,7 @@ struct FileCopyer
 
 		for (int i = 0; i < PENDING_IO; i++)
 		{
-			create_detached_coroutine(std::bind(&FileCopyer::buffer_carrier, this, i, srcFile, destFile, std::ref(chan)));
+			create_detached_coroutine(std::bind(&FileCopyer::buffer_carrier, this, srcFile, destFile, std::ref(chan)));
 		}
 
 		// wait until completed.
