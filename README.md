@@ -83,6 +83,10 @@ iocp4linux 如名字所言，它在 Linux 上实现IO完成端口。它的目的
 | DisconnectEx                | ✅                       | ✅                            |
 | CreateFileA                 | ✅                       | ✅                            |
 | CreateFileW                 | ✅                       | ✅                            |
+| GetFileSize                 | ✅                       | ✅                            |
+| SetFilePointer              | ✅                       | ✅                            |
+| SetEndOfFile                | ✅                       | ✅                            |
+
 | ReadFile                    | ✅                       | API 可用，为同步模拟         |
 | WriteFile                   | ✅                       | API 可用，为同步模拟         |
 | CloseHandle                 | ✅                       | ✅                            |

@@ -81,6 +81,9 @@ Lists of implemented APIs:
 | DisconnectEx                | ✅                       | ✅                            |
 | CreateFileA                 | ✅                       | ✅                            |
 | CreateFileW                 | ✅                       | ✅                            |
+| GetFileSize                 | ✅                       | ✅                            |
+| SetFilePointer              | ✅                       | ✅                            |
+| SetEndOfFile                | ✅                       | ✅                            |
 | ReadFile                    | ✅                       | API exist, but  blocking      |
 | WriteFile                   | ✅                       | API exist, but  blocking      |
 | CloseHandle                 | ✅                       | ✅                            |
