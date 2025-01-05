@@ -21,3 +21,7 @@ add_executable(web_server web_server/server.cpp)
 add_executable(example_on_zhihu zhihu.cpp)
 
 add_executable(echo_client_stackfull echo_client/echo_client_stackfull.cpp)
+
+if(WIN32)
+    add_subdirectory(unbufcpy)
+endif()
