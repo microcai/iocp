@@ -40,7 +40,7 @@
 #ifdef __cplusplus
 #define IOCP_DECL extern "C"
 #else
-#define IOCP_DECL
+#define IOCP_DECL extern
 #endif
 typedef char CHAR;
 typedef char* LPSTR;
@@ -50,9 +50,13 @@ typedef const wchar_t* LPCWSTR;
 typedef int* LPINT;
 typedef unsigned long ULONG_PTR, *PULONG_PTR, ULONG, *PULONG;
 typedef uint16_t WORD, *LPWORD;
-typedef uint32_t DWORD, *LPDWORD, *DWORD_PTR;
+typedef uint64_t DWORD_PTR;
+typedef uint32_t DWORD, *LPDWORD;
+typedef int32_t LONG, *PLONG;
+typedef int64_t LONGLONG;
+
 typedef bool BOOL; // bool is from stdbool if C99 mode.
-typedef void *PVOID, *LPVOID;
+typedef void VOID, *PVOID, *LPVOID;
 typedef const void *LPCVOID;
 typedef uint16_t TCHAR;
 typedef struct sockaddr SOCKADDR, * LPSOCKADDR;
@@ -67,6 +71,18 @@ const HANDLE INVALID_HANDLE_VALUE = (HANDLE)-1;
 const SOCKET INVALID_SOCKET = (SOCKET)-1;
 
 #define INFINITE -1
+
+typedef union _ULARGE_INTEGER {
+  struct {
+    DWORD LowPart;
+    DWORD HighPart;
+  };
+  struct {
+    DWORD LowPart;
+    DWORD HighPart;
+  } u;
+  uint64_t QuadPart;
+} ULARGE_INTEGER;
 
 typedef struct _OVERLAPPED
 {
@@ -136,6 +152,8 @@ IOCP_DECL BOOL WINAPI CancelIoEx(
 
 // WSA Socket api(Overlapped) the work with iocp
 #define SOCKET_ERROR -1
+#define NO_ERROR 0
+#define INVALID_SET_FILE_POINTER EINVAL
 
 typedef struct WSAData
 {
@@ -219,6 +237,7 @@ typedef struct _WSAPROTOCOL_INFO* LPWSAPROTOCOL_INFO;
 enum
 {
 	WSA_FLAG_OVERLAPPED = 0x01,
+  FILE_FLAG_NO_BUFFERING = 0x02,
 #define FILE_FLAG_OVERLAPPED WSA_FLAG_OVERLAPPED
 	WSA_FLAG_NO_HANDLE_INHERIT = 0x80,
 #define WSA_FLAG_NO_HANDLE_INHERIT WSA_FLAG_NO_HANDLE_INHERIT
@@ -472,8 +491,27 @@ IOCP_DECL HANDLE CreateFileW(
   _In_opt_        HANDLE                hTemplateFile
 );
 
-
 #define CreateFile CreateFileA
+
+IOCP_DECL DWORD GetFileSize(
+  _In_            HANDLE  hFile,
+  _Out_opt_ LPDWORD lpFileSizeHigh
+);
+
+#define FILE_BEGIN SEEK_SET
+#define FILE_CURRENT SEEK_CUR
+#define FILE_END SEEK_END
+
+IOCP_DECL DWORD SetFilePointer(
+  _In_                 HANDLE hFile,
+  _In_                 LONG   lDistanceToMove,
+  _Inout_              PLONG  lpDistanceToMoveHigh,
+  _In_                 DWORD  dwMoveMethod
+);
+
+IOCP_DECL BOOL SetEndOfFile(
+  _In_ HANDLE hFile
+);
 
 IOCP_DECL BOOL ReadFile(
   _In_                HANDLE       hFile,

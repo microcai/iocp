@@ -1064,6 +1064,46 @@ IOCP_DECL HANDLE CreateFileW(
 	return CreateFileA(utf8_str.c_str(), dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 }
 
+IOCP_DECL DWORD GetFileSize(
+  _In_            HANDLE  hFile,
+  _Out_opt_ LPDWORD lpFileSizeHigh)
+{
+	struct stat status;
+	fstat(hFile->native_handle(), &status);
+	if (lpFileSizeHigh)
+	{
+		*lpFileSizeHigh = status.st_size >> 32;
+	}
+	return  status.st_size & 0xFFFFFFFF;
+}
+
+IOCP_DECL DWORD SetFilePointer(
+  _In_                 HANDLE hFile,
+  _In_                 LONG   lDistanceToMove,
+  _Inout_              PLONG  lpDistanceToMoveHigh,
+  _In_                 DWORD  dwMoveMethod)
+{
+	off_t offset = lDistanceToMove;
+	if (lpDistanceToMoveHigh)
+	{
+		uint64_t offset_high = *lpDistanceToMoveHigh;
+		offset += offset_high << 32;
+	}
+	offset = lseek(hFile->native_handle(), offset, dwMoveMethod);
+	if (lpDistanceToMoveHigh)
+	{
+		*lpDistanceToMoveHigh = offset >> 32;
+	}
+	return offset & 0xFFFFFFFF;
+}
+
+IOCP_DECL BOOL SetEndOfFile(_In_ HANDLE hFile)
+{
+	int fd = hFile->native_handle();
+	off_t cur_pos = lseek(fd, 0, SEEK_CUR);
+	return ftruncate(fd, cur_pos) == 0;
+}
+
 IOCP_DECL BOOL ReadFile(
   _In_                HANDLE       hFile,
   _Out_               LPVOID       lpBuffer,
