@@ -1020,11 +1020,6 @@ IOCP_DECL HANDLE CreateFileA(
 		oflag = O_RDWR;
 	}
 
-	if (dwFlagsAndAttributes & FILE_FLAG_NO_BUFFERING)
-	{
-		oflag |= __O_DIRECT;
-	}
-
 	if (dwDesiredAccess & GENERIC_EXECUTE)
 	{
 		mode = 0755;
@@ -1136,6 +1131,7 @@ IOCP_DECL BOOL ReadFile(
 
 	struct io_uring_readfile_op : io_uring_operations
 	{
+		iovec iovector;
 		virtual void do_complete(io_uring_cqe* cqe, DWORD* lpNumberOfBytes) override
 		{
 			if (cqe->res < 0) [[unlikely]]
@@ -1150,10 +1146,12 @@ IOCP_DECL BOOL ReadFile(
 	op->overlapped_ptr = lpOverlapped;
 	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
+	op->iovector.iov_base = lpBuffer;
+	op->iovector.iov_len = nNumberOfBytesToRead;
 	auto fd = s->native_handle();
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
 	{
-		io_uring_prep_read(sqe, fd, lpBuffer, nNumberOfBytesToRead, lpOverlapped->offset_64);
+		io_uring_prep_readv2(sqe, fd, &op->iovector, 1, lpOverlapped->offset_64, 0);
 		io_uring_sqe_set_data(sqe, op);
 	});
 
