@@ -71,14 +71,14 @@ DWORD GetTickCount()
 // File handles for the copy operation. All read operations are
 // from SourceFile. All write operations are to DestFile.
 //
-HANDLE SourceFile;
-HANDLE DestFile;
+HANDLE SourceFile = INVALID_HANDLE_VALUE;
+HANDLE DestFile = INVALID_HANDLE_VALUE;
 
 //
 // I/O completion port. All read and writes to the files complete
 // to this port.
 //
-HANDLE IoPort;
+HANDLE IoPort = INVALID_HANDLE_VALUE;
 
 //
 // Key values used to determine whether a read or a write
@@ -154,7 +154,7 @@ int main(
     //
 
     SourceFile = CreateFile(argv[1],
-                            GENERIC_READ | GENERIC_WRITE,
+                            GENERIC_READ,
                             FILE_SHARE_READ,
                             NULL,
                             OPEN_EXISTING,
@@ -420,10 +420,6 @@ void CopyLoop(ULARGE_INTEGER FileSize)
                 exit(1);
             }
 
-            //
-            // decrement pending I/O count
-            //
-            --PendingIO;
 
         } else if (Key == WriteKey) {
 

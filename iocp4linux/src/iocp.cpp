@@ -1003,17 +1003,26 @@ IOCP_DECL HANDLE CreateFileA(
   _In_opt_        HANDLE                hTemplateFile
 )
 {
-	assert(dwFlagsAndAttributes & FILE_FLAG_OVERLAPPED);
+	// assert(dwFlagsAndAttributes & FILE_FLAG_OVERLAPPED);
 
 	int oflag = 0;
 	int mode = 0644;
 	if (dwDesiredAccess & GENERIC_READ)
 	{
-		oflag |= O_RDONLY;
+		oflag = O_RDONLY;
 	}
 	if (dwDesiredAccess & GENERIC_WRITE)
 	{
-		oflag |= O_WRONLY;
+		oflag = O_WRONLY;
+	}
+	if ((dwDesiredAccess & (GENERIC_WRITE|GENERIC_READ)) == (GENERIC_WRITE|GENERIC_READ))
+	{
+		oflag = O_RDWR;
+	}
+
+	if (dwFlagsAndAttributes & FILE_FLAG_NO_BUFFERING)
+	{
+		oflag |= __O_DIRECT;
 	}
 
 	if (dwDesiredAccess & GENERIC_EXECUTE)
@@ -1101,7 +1110,8 @@ IOCP_DECL BOOL SetEndOfFile(_In_ HANDLE hFile)
 {
 	int fd = hFile->native_handle();
 	off_t cur_pos = lseek(fd, 0, SEEK_CUR);
-	return ftruncate(fd, cur_pos) == 0;
+	auto result = ftruncate(fd, cur_pos);
+	return result == 0;
 }
 
 IOCP_DECL BOOL ReadFile(
@@ -1140,9 +1150,10 @@ IOCP_DECL BOOL ReadFile(
 	op->overlapped_ptr = lpOverlapped;
 	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
+	auto fd = s->native_handle();
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
 	{
-		io_uring_prep_read(sqe, s->native_handle(), lpBuffer, nNumberOfBytesToRead, lpOverlapped->offset_64);
+		io_uring_prep_read(sqe, fd, lpBuffer, nNumberOfBytesToRead, lpOverlapped->offset_64);
 		io_uring_sqe_set_data(sqe, op);
 	});
 

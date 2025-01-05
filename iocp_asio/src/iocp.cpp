@@ -749,7 +749,6 @@ int setsockopt(SOCKET __fd, int __level, int __optname, const void *__optval, so
 /***********************************************************************************
 * Overlapped File IO
 ************************************************************************************/
-
 IOCP_DECL HANDLE CreateFileA(
   _In_            LPCSTR                lpFileName,
   _In_            DWORD                 dwDesiredAccess,
@@ -760,17 +759,21 @@ IOCP_DECL HANDLE CreateFileA(
   _In_opt_        HANDLE                hTemplateFile
 )
 {
-	assert(dwFlagsAndAttributes & FILE_FLAG_OVERLAPPED);
+	// assert(dwFlagsAndAttributes & FILE_FLAG_OVERLAPPED);
 
 	int oflag = 0;
 	int mode = 0644;
 	if (dwDesiredAccess & GENERIC_READ)
 	{
-		oflag |= O_RDONLY;
+		oflag = O_RDONLY;
 	}
 	if (dwDesiredAccess & GENERIC_WRITE)
 	{
-		oflag |= O_WRONLY;
+		oflag = O_WRONLY;
+	}
+	if ((dwDesiredAccess & (GENERIC_WRITE|GENERIC_READ)) == (GENERIC_WRITE|GENERIC_READ))
+	{
+		oflag = O_RDWR;
 	}
 
 	if (dwDesiredAccess & GENERIC_EXECUTE)
@@ -821,7 +824,6 @@ IOCP_DECL HANDLE CreateFileW(
 	return CreateFileA(utf8_str.c_str(), dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 }
 
-
 IOCP_DECL DWORD GetFileSize(
   _In_            HANDLE  hFile,
   _Out_opt_ LPDWORD lpFileSizeHigh)
@@ -859,7 +861,8 @@ IOCP_DECL BOOL SetEndOfFile(_In_ HANDLE hFile)
 {
 	int fd = hFile->native_handle();
 	off_t cur_pos = lseek(fd, 0, SEEK_CUR);
-	return ftruncate(fd, cur_pos) == 0;
+	auto result = ftruncate(fd, cur_pos);
+	return result == 0;
 }
 
 IOCP_DECL BOOL ReadFile(

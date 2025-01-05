@@ -129,7 +129,7 @@ struct SOCKET_emu_class final : public base_handle
 	{
 		if (_iocp)
 		{
-			_iocp->submit_io([this](io_uring_sqe* sqe)
+			_iocp->submit_io_immediatly([this](io_uring_sqe* sqe)
 			{
 				io_uring_prep_close(sqe, _socket_fd);
 				io_uring_sqe_set_data(sqe, nullptr);
