@@ -105,7 +105,7 @@ static void echo_sever_client_session(SOCKET client_sock)
 
    DWORD recv_bytes = 0, flag = 0;
 
-   if (WSARecv(client_sock, &wsabuf1, 1, &recv_bytes, &flag, &ov.ov, NULL) == SOCKET_ERROR)
+   if (WSARecv(client_sock, &wsabuf1, 1, &recv_bytes, &flag, &ov, NULL) == SOCKET_ERROR)
    {
       int err = WSAGetLastError();
       if (err != WSA_IO_PENDING)
@@ -130,7 +130,7 @@ static void echo_sever_client_session(SOCKET client_sock)
 
    memset(&ov, 0, sizeof(ov));
 
-   if (WSASend(client_sock, wsabuf, 3, NULL, 0, &ov.ov, NULL) == SOCKET_ERROR)
+   if (WSASend(client_sock, wsabuf, 3, NULL, 0, &ov, NULL) == SOCKET_ERROR)
    {
       int err = WSAGetLastError();
       if (err != WSA_IO_PENDING)
@@ -168,7 +168,7 @@ static void accept_coroutine(SOCKET listener, HANDLE iocp_handle)
 		FiberOVERLAPPED ov;
       DWORD ignore = 0;
 
-		BOOL result = AcceptEx(listener, client_socket, addr_buf, 0, sizeof (SOCKADDR_IN)+16, sizeof (SOCKADDR_IN)+16, &ignore, &ov.ov);
+		BOOL result = AcceptEx(listener, client_socket, addr_buf, 0, sizeof (SOCKADDR_IN)+16, sizeof (SOCKADDR_IN)+16, &ignore, &ov);
 		ov.last_error = WSAGetLastError();
 
 		if (!(!result && ov.last_error != WSA_IO_PENDING))

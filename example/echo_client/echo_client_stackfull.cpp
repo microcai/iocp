@@ -31,7 +31,7 @@ static void echo_client(HANDLE iocp_handle, const char* lp_server_addr)
 
 	FiberOVERLAPPED ov;
 
-	auto result = WSAConnectEx(sock, (const SOCKADDR*) &server_addr, INET_ADDRSTRLEN, 0, 0, 0, &ov.ov);
+	auto result = WSAConnectEx(sock, (const SOCKADDR*) &server_addr, INET_ADDRSTRLEN, 0, 0, 0, &ov);
 
 	float c = ov.last_error + 1;
 
@@ -61,7 +61,7 @@ static void echo_client(HANDLE iocp_handle, const char* lp_server_addr)
 
 	DWORD sent = 0;
 
-	result = WSASend(sock, &buf, 1, &sent, 0, &ov.ov, 0);
+	result = WSASend(sock, &buf, 1, &sent, 0, &ov, 0);
 	ov.last_error = WSAGetLastError();
 	if (!(!result && ov.last_error != WSA_IO_PENDING))
 	{
@@ -74,7 +74,7 @@ static void echo_client(HANDLE iocp_handle, const char* lp_server_addr)
 
 	WSABUF readbuf = { .len = sizeof(buffer), .buf = buffer };
 
-	result = WSARecv(sock, &readbuf, 1, &read_bytes, &ignore, &ov.ov, 0);
+	result = WSARecv(sock, &readbuf, 1, &read_bytes, &ignore, &ov, 0);
 	ov.last_error = WSAGetLastError();
 	if (!(!result && ov.last_error != WSA_IO_PENDING))
 	{

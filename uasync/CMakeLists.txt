@@ -5,7 +5,7 @@ option(DISABLE_BOOST_CONTEXT "disable the usa of boost.context asm" OFF)
 option(DISABLE_UCONTEXT "disable ucontext and use setjmp/longjmp" OFF)
 option(USE_ZCONTEXT "use zcontext api to do context switch" OFF)
 
-add_library(uasync INTERFACE)
+add_library(uasync INTERFACE include/awaitable.hpp include/extensable_iocp.hpp include/iocp_callback.hpp include/universal_async.hpp include/universal_fiber.hpp include/universal_fiber.h)
 
 target_include_directories(uasync INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 

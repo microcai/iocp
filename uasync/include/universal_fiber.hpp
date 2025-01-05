@@ -110,9 +110,8 @@ struct object_space
 	static constexpr size_t size = stack_align_space<T, alignas_>();
 };
 
-typedef struct FiberOVERLAPPED
-{
-	OVERLAPPED ov;
+typedef struct FiberOVERLAPPED : public OVERLAPPED
+{	
 #if defined (USE_FCONTEXT)
 	fcontext_t target;
 #elif defined(USE_WINFIBER)
@@ -129,15 +128,10 @@ typedef struct FiberOVERLAPPED
 	std::atomic_flag ready;
 	std::atomic_flag resume_flag;
 
-	OVERLAPPED* operator & ()
-	{
-		 return & ov;
-	}
-
     void reset()
     {
-        ov.Internal = ov.InternalHigh = 0;
-        ov.hEvent = NULL;
+        Internal = InternalHigh = 0;
+        hEvent = NULL;
         byte_transfered = 0;
         ready.clear();
 		resume_flag.clear();
@@ -145,18 +139,18 @@ typedef struct FiberOVERLAPPED
 
     void set_offset(uint64_t offset)
     {
-        ov.Offset = offset & 0xFFFFFFFF;
-        ov.OffsetHigh = (offset >> 32);
+        Offset = offset & 0xFFFFFFFF;
+        OffsetHigh = (offset >> 32);
     }
 
     void add_offset(uint64_t offset)
     {
-        uint64_t cur_offset = ov.OffsetHigh;
+        uint64_t cur_offset = OffsetHigh;
         cur_offset <<= 32;
-        cur_offset += ov.Offset;
+        cur_offset += Offset;
         cur_offset += offset;
-        ov.Offset = cur_offset & 0xFFFFFFFF;
-        ov.OffsetHigh = (cur_offset >> 32);
+        Offset = cur_offset & 0xFFFFFFFF;
+        OffsetHigh = (cur_offset >> 32);
     }
 
 	FiberOVERLAPPED()
