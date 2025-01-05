@@ -46,10 +46,26 @@ Abstract:
 #pragma warning(disable:4100)
 #endif
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include "iocp.h"
+#include <time.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+
+#ifndef _WIN32
+
+DWORD GetTickCount()
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec* 1000 + ts.tv_nsec/1000000;
+}
+
+#endif
 
 //
 // File handles for the copy operation. All read operations are
@@ -57,11 +73,6 @@ Abstract:
 //
 HANDLE SourceFile;
 HANDLE DestFile;
-
-//
-//version information
-//
-OSVERSIONINFO     ver;
 
 //
 // I/O completion port. All read and writes to the files complete
@@ -112,9 +123,7 @@ CopyLoop(
     ULARGE_INTEGER FileSize
     );
 
-int
-__cdecl
-main(
+int main(
     int argc,
     char *argv[]
     )
@@ -124,7 +133,6 @@ main(
     BOOL Success;
     DWORD Status;
     DWORD StartTime, EndTime;
-    SYSTEM_INFO SystemInfo;
     HANDLE BufferedHandle;
 
     if (argc != 3) {
@@ -132,46 +140,13 @@ main(
         exit(1);
     }
 
-    //
-    //confirm we are running on Windows NT 3.5 or greater, if not, display notice and
-    //terminate.  Completion ports are only supported on Win32 & Win32s.  Creating a
-    //Completion port with no handle specified is only supported on NT 3.51, so we need
-    //to know what we're running on.  Note, Win32s does not support console apps, thats
-    //why we exit here if we are not on Windows NT.
-    //
-    //
-    //ver.dwOSVersionInfoSize needs to be set before calling GetVersionInfoEx()
-    //
-    ver.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
-
-    //
-    //Failure here could mean several things.  1. On an NT system,
-    //it indicates NT version 3.1 because GetVersionEx() is only
-    //implemented on NT 3.5.  2. On Windows 3.1 system, it means
-    //either Win32s version 1.1 or 1.0 is installed.
-    //
-    Success = GetVersionEx((LPOSVERSIONINFO) &ver);
-
-    if ( (!Success) ||                                   //GetVersionEx() failed - see above.
-         (ver.dwPlatformId != VER_PLATFORM_WIN32_NT) )   //GetVersionEx() succeeded but we are not on NT.
-      {
-       MessageBox(NULL,
-                  "This sample application can only be run on Windows NT. 3.5 or greater\n"
-                  "This application will now terminate.",
-                  "UnBufCp1",
-                  MB_OK           |
-                  MB_ICONSTOP     |
-                  MB_SETFOREGROUND );
-       exit( 1 );
-      }
-
-
-    //
-    // Get the system's page size.
-    //
+#ifdef _WIN32
+    SYSTEM_INFO SystemInfo;
     GetSystemInfo(&SystemInfo);
     PageSize = SystemInfo.dwPageSize;
-
+#else
+    PageSize = 4096;
+#endif
     //
     // Open the source file and create the destination file.
     // Use FILE_FLAG_NO_BUFFERING to avoid polluting the
@@ -227,59 +202,39 @@ main(
     }
 
     //
-    //In NT 3.51 it is not necessary to specify the FileHandle parameter
-    //of CreateIoCompletionPort()--It is legal to specify the FileHandle
-    //as INVALID_HANDLE_VALUE.  However, for NT 3.5 an overlapped file
-    //handle is needed.
+    //we are running on NT 3.51 or greater.
+    //Create the I/O Completion Port
     //
-    //We know already that we are running on NT, or else we wouldn't have
-    //gotten this far, so lets see what version we are running on.
+    IoPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE,//file handle to associate with I/O completion port
+                                    NULL,                //optional handle to existing I/O completion port
+                                    ReadKey,             //completion key
+                                    1);                  //# of threads allowed to execute concurrently
+
+
+    if (IoPort == NULL) {
+        fprintf(stderr, "failed to create ReadPort, error %d\n", GetLastError());
+        exit(1);
+    }
+
     //
-    if (ver.dwMajorVersion == 3 && ver.dwMinorVersion == 50) 
-        //
-        //we're running on NT 3.5 - Completion Ports exists.
-        //
-        IoPort = CreateIoCompletionPort(SourceFile,            //file handle to associate with I/O completion port.
-                                        NULL,                  //optional handle to existing I/O completion port.
-                                        ReadKey,               //completion key.
-                                        1);                    //# of threads allowed to execute concurrently.
-    else
-        {
-          //                                                   
-          //we are running on NT 3.51 or greater.
-          //Create the I/O Completion Port
-          //
-          IoPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE,//file handle to associate with I/O completion port
-                                          NULL,                //optional handle to existing I/O completion port
-                                          ReadKey,             //completion key
-                                          1);                  //# of threads allowed to execute concurrently
+    //If we need to, aka we're running on NT 3.51, let's associate a file handle with the
+    //completion port.
+    //
 
+    IoPort = CreateIoCompletionPort(SourceFile,
+                                    IoPort,
+                                    ReadKey,
+                                    1);
 
-          if (IoPort == NULL) {
-             fprintf(stderr, "failed to create ReadPort, error %d\n", GetLastError());
-             exit(1);
-          }
+    if (IoPort == NULL)
+    {
+        fprintf(stderr,
+                "failed to create IoPort, error %d\n",
+                GetLastError());
 
-         //
-         //If we need to, aka we're running on NT 3.51, let's associate a file handle with the
-         //completion port.
-         //
+        exit(1);
 
-         IoPort = CreateIoCompletionPort(SourceFile,
-                                         IoPort,
-                                         ReadKey,
-                                         1);
-
-         if (IoPort == NULL)
-           {
-             fprintf(stderr,
-                     "failed to create IoPort, error %d\n",
-                     GetLastError());
-
-             exit(1);
-
-           }
-        }
+    }
 
     //
     // Associate the destination file handle with the
@@ -360,10 +315,7 @@ main(
 
 }
 
-VOID
-CopyLoop(
-    ULARGE_INTEGER FileSize
-    )
+void CopyLoop(ULARGE_INTEGER FileSize)
 {
     ULARGE_INTEGER ReadPointer;
     BOOL Success;
@@ -388,10 +340,8 @@ CopyLoop(
         // Use VirtualAlloc so we get a page-aligned buffer suitable
         // for unbuffered I/O.
         //
-        CopyChunk[i].Buffer = VirtualAlloc(NULL,
-                                           BUFFER_SIZE,
-                                           MEM_COMMIT,
-                                           PAGE_READWRITE);
+        CopyChunk[i].Buffer = malloc(BUFFER_SIZE);
+
         if (CopyChunk[i].Buffer == NULL) {
             fprintf(stderr, "VirtualAlloc %d failed, error %d\n",i, GetLastError());
             exit(1);
@@ -434,14 +384,14 @@ CopyLoop(
             //
             // Either the function failed to dequeue a completion packet
             // (CompletedOverlapped is not NULL) or it dequeued a completion
-            // packet of a failed I/O operation (CompletedOverlapped is NULL).  
+            // packet of a failed I/O operation (CompletedOverlapped is NULL).
             //
             fprintf(stderr,
                     "GetQueuedCompletionStatus on the IoPort failed, error %d\n",
                     GetLastError());
             exit(1);
         }
-       
+
 
         Chunk = (PCOPY_CHUNK)CompletedOverlapped;
 
@@ -507,7 +457,7 @@ CopyLoop(
         }
     }
     //
-    // All done. There is no need to call VirtualFree() to free CopyChunk 
+    // All done. There is no need to call VirtualFree() to free CopyChunk
     // buffers here. The buffers will be freed when this process exits.
     //
 }
