@@ -184,7 +184,11 @@ struct FiberCallableArgument
 	alignas(64) char callable_storage[sizeof(Callable)];
 };
 
-inline constexpr std::size_t FiberContextSize = 65536;
+#ifndef COROTINE_STACK_SIZE
+#define COROTINE_STACK_SIZE 65536
+#endif
+
+inline constexpr std::size_t FiberContextSize = COROTINE_STACK_SIZE;
 
 template<typename Callable>
 struct FiberContext
