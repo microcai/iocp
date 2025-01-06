@@ -238,6 +238,7 @@ enum
 {
 	WSA_FLAG_OVERLAPPED = 0x01,
   FILE_FLAG_NO_BUFFERING = 0x02,
+  FILE_FLAG_SEQUENTIAL_SCAN = 0x4,
 #define FILE_FLAG_OVERLAPPED WSA_FLAG_OVERLAPPED
 	WSA_FLAG_NO_HANDLE_INHERIT = 0x80,
 #define WSA_FLAG_NO_HANDLE_INHERIT WSA_FLAG_NO_HANDLE_INHERIT
@@ -520,6 +521,15 @@ IOCP_DECL BOOL ReadFile(
   _Out_opt_	          LPDWORD      lpNumberOfBytesRead,
   _Inout_             LPOVERLAPPED lpOverlapped
 );
+
+IOCP_DECL BOOL ReadFileEx(
+  _In_                HANDLE       hFile,
+  _Out_               LPVOID       lpBuffer,
+  _In_                DWORD        nNumberOfBytesToRead,
+  _Inout_             LPOVERLAPPED lpOverlapped,
+  _In_                LPOVERLAPPED_COMPLETION_ROUTINE callback
+);
+
 
 IOCP_DECL BOOL WriteFile(
   _In_                 HANDLE       hFile,
