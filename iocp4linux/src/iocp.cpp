@@ -178,10 +178,6 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatus(
 
 		*lpCompletionKey = op->CompletionKey;
 		*lpOverlapped = op->overlapped_ptr;
-		if (op->lpCompletionRoutine) [[unlikely]]
-		{
-			op->lpCompletionRoutine(cqe->res < 0 ? -cqe->res : 0, cqe->res < 0 ? 0 :cqe->res, op->overlapped_ptr);
-		}
 
 		io_uring_operation_allocator{}.deallocate(op, op->size);
 
@@ -328,13 +324,8 @@ IOCP_DECL BOOL WINAPI GetQueuedCompletionStatusEx(
 				lpCompletionPortEntries[number_of_overlapped].lpCompletionKey = op->CompletionKey;
 				lpCompletionPortEntries[number_of_overlapped].lpOverlapped = op->overlapped_ptr;
 				io_uring_cqe_seen(&iocp->ring_, cqe);
+
 				number_of_overlapped ++;
-
-				if (op->lpCompletionRoutine) [[unlikely]]
-				{
-					op->lpCompletionRoutine(cqe->res < 0 ? -cqe->res : 0, cqe->res < 0 ? 0 :cqe->res, op->overlapped_ptr);
-				}
-
 				io_uring_operation_allocator{}.deallocate(op, op->size);
 			}
 
@@ -400,7 +391,6 @@ IOCP_DECL BOOL WINAPI CancelIo(_In_ HANDLE hFile)
 	// now, enter IOCP emul logic
 	io_uring_cancel_op* op = io_uring_operation_allocator{}.allocate<io_uring_cancel_op>();
 	op->CompletionKey = 0;
-	op->lpCompletionRoutine = 0;
 	op->overlapped_ptr = 0;
 
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
@@ -429,7 +419,6 @@ IOCP_DECL BOOL WINAPI CancelIoEx(_In_ HANDLE  hFile, _In_opt_ LPOVERLAPPED lpOve
 	io_uring_cancel_op* op = io_uring_operation_allocator{}.allocate<io_uring_cancel_op>();
 	void* user_data = (void*) lpOverlapped->Internal;
 	op->CompletionKey = 0;
-	op->lpCompletionRoutine = 0;
 	op->overlapped_ptr = 0;
 
 	iocp->submit_io([&](struct io_uring_sqe* sqe)
@@ -652,6 +641,7 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 	iocp_handle_emu_class* iocp = s->_iocp;
 
 	assert(lpOverlapped);
+	assert(lpCompletionRoutine == 0);
 
 	lpOverlapped->InternalHigh = (ULONG_PTR) __builtin_extract_return_addr (__builtin_return_address (0));
 
@@ -673,7 +663,6 @@ IOCP_DECL int WSASend(_In_ SOCKET socket_, _In_ LPWSABUF lpBuffers, _In_ DWORD d
 
 	// now, enter IOCP emul logic
 	io_uring_write_op* op = io_uring_operation_allocator{}.allocate<io_uring_write_op>();
-	op->lpCompletionRoutine = lpCompletionRoutine;
 	op->overlapped_ptr = lpOverlapped;
 	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
@@ -718,6 +707,7 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 
 	// *lpNumberOfBytesRecvd = 0;
 	assert(lpOverlapped);
+	assert(lpCompletionRoutine == 0);
 
 	struct io_uring_read_op : io_uring_operations
 	{
@@ -736,7 +726,6 @@ IOCP_DECL int WSARecv(_In_ SOCKET socket_, _Inout_ LPWSABUF lpBuffers, _In_ DWOR
 
 	// now, enter IOCP emul logic
 	io_uring_read_op* op = io_uring_operation_allocator{}.allocate<io_uring_read_op>();
-	op->lpCompletionRoutine = lpCompletionRoutine;
 	op->overlapped_ptr = lpOverlapped;
 	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
@@ -783,6 +772,7 @@ IOCP_DECL int WSASendTo(
 	iocp_handle_emu_class* iocp = s->_iocp;
 
 	assert(lpOverlapped);
+	assert(lpCompletionRoutine == 0);
 
 	*lpNumberOfBytesSent = 0;
 
@@ -799,7 +789,6 @@ IOCP_DECL int WSASendTo(
 
 	// now, enter IOCP emul logic
 	io_uring_write_op* op = io_uring_operation_allocator{}.allocate<io_uring_write_op>();
-	op->lpCompletionRoutine = lpCompletionRoutine;
 	op->overlapped_ptr = lpOverlapped;
 	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;
@@ -847,6 +836,7 @@ IOCP_DECL int WSARecvFrom(
 
 	// *lpNumberOfBytesRecvd = 0;
 	assert(lpOverlapped);
+	assert(lpCompletionRoutine == 0);
 
 	struct io_uring_read_op : io_uring_operations
 	{
@@ -866,7 +856,6 @@ IOCP_DECL int WSARecvFrom(
 
 	// now, enter IOCP emul logic
 	io_uring_read_op* op = io_uring_operation_allocator{}.allocate<io_uring_read_op>();
-	op->lpCompletionRoutine = lpCompletionRoutine;
 	op->overlapped_ptr = lpOverlapped;
 	lpOverlapped->Internal = reinterpret_cast<ULONG_PTR>(op);
 	op->CompletionKey = s->_completion_key;

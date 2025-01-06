@@ -522,15 +522,6 @@ IOCP_DECL BOOL ReadFile(
   _Inout_             LPOVERLAPPED lpOverlapped
 );
 
-IOCP_DECL BOOL ReadFileEx(
-  _In_                HANDLE       hFile,
-  _Out_               LPVOID       lpBuffer,
-  _In_                DWORD        nNumberOfBytesToRead,
-  _Inout_             LPOVERLAPPED lpOverlapped,
-  _In_                LPOVERLAPPED_COMPLETION_ROUTINE callback
-);
-
-
 IOCP_DECL BOOL WriteFile(
   _In_                 HANDLE       hFile,
   _In_                 LPCVOID      lpBuffer,
