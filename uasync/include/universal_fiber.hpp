@@ -160,6 +160,8 @@ typedef struct FiberOVERLAPPED : public OVERLAPPED
 		reset();
 	}
 
+	static inline void WSAOverlappedCompletionRoutine(DWORD last_error, DWORD dwNumberOfBytesTransfered, LPWSAOVERLAPPED lpOverlapped, DWORD flags);
+	static inline void OverlappedCompletionRoutine(DWORD last_error, DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOverlapped);
 } FiberOVERLAPPED;
 
 template<size_t StackSize>
@@ -443,19 +445,17 @@ inline DWORD get_overlapped_result(FiberOVERLAPPED& ov)
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 //  common api to implement uasync
 // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-// call this after GetQueuedCompletionStatus.
-inline void process_stack_full_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWORD last_error)
+inline void FiberOVERLAPPED::OverlappedCompletionRoutine(DWORD last_error, DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOverlapped)
 {
-	FiberOVERLAPPED* ovl_res = (FiberOVERLAPPED*)(_ov->lpOverlapped);
-	ovl_res->byte_transfered = _ov->dwNumberOfBytesTransferred;
+	FiberOVERLAPPED* ovl_res = (FiberOVERLAPPED*)(lpOverlapped);
+	ovl_res->byte_transfered = dwNumberOfBytesTransfered;
 	ovl_res->last_error = last_error;
 
 	if (ovl_res->ready.test_and_set()) [[likely]]
 	{
 		assert(ovl_res->ready.test());
 		// need to resume
-		while (!ovl_res->resume_flag.test()){}
+		while (!ovl_res->resume_flag.test()) {}
 		assert(ovl_res->ready.test());
 
 #ifdef USE_FCONTEXT
@@ -469,6 +469,17 @@ inline void process_stack_full_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWO
 		winfiber_resume_coro(ovl_res->target_fiber);
 #endif
 	}
+}
+
+inline void FiberOVERLAPPED::WSAOverlappedCompletionRoutine(DWORD last_error, DWORD dwNumberOfBytesTransfered, LPWSAOVERLAPPED lpOverlapped, DWORD flags)
+{
+	FiberOVERLAPPED::OverlappedCompletionRoutine(last_error, dwNumberOfBytesTransfered, lpOverlapped);
+}
+
+// call this after GetQueuedCompletionStatus.
+inline void process_stack_full_overlapped_event(const OVERLAPPED_ENTRY* _ov, DWORD last_error)
+{
+	FiberOVERLAPPED::OverlappedCompletionRoutine(last_error, _ov->dwNumberOfBytesTransferred, _ov->lpOverlapped);
 }
 
 inline auto bind_stackfull_iocp(HANDLE file, HANDLE iocp_handle, DWORD = 0, DWORD = 0)
