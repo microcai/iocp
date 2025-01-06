@@ -44,7 +44,7 @@ Abstract:
 --*/
 #define BUFFER_SIZE (64*1024)
 
-#define PENDING_IO 48
+#define PENDING_IO 256
 
 #include "universal_async.hpp"
 #include "universal_fiber.hpp"
@@ -249,7 +249,7 @@ static void copy_coroutine(HANDLE IoPort, std::string sourcefilename, std::strin
 		FILE_SHARE_READ|FILE_SHARE_DELETE,
 		NULL,
 		OPEN_EXISTING,
-		FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED,
+		FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED| FILE_FLAG_SEQUENTIAL_SCAN,
 		NULL);
 	if (SourceFile == INVALID_HANDLE_VALUE) {
 		fprintf(stderr, "failed to open %s, error %d\n", sourcefilename.c_str(), GetLastError());
@@ -266,7 +266,7 @@ static void copy_coroutine(HANDLE IoPort, std::string sourcefilename, std::strin
 		FILE_SHARE_READ,
 		NULL,
 		CREATE_ALWAYS,
-		FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED,
+		FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED | FILE_FLAG_SEQUENTIAL_SCAN,
 		SourceFile);
 	if (DestFile == INVALID_HANDLE_VALUE) {
 		fprintf(stderr, "failed to open %s, error %d\n", destfilename.c_str(), GetLastError());
