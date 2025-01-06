@@ -48,6 +48,7 @@ Abstract:
 #include "universal_fiber.hpp"
 
 #include <chrono>
+#include <iostream>
 
 //
 // Define the size of the buffers used to do the I/O.
@@ -239,9 +240,8 @@ static void copy_coroutine(HANDLE IoPort, std::string sourcefilename, std::strin
     auto duration = EndTime - StartTime;
     auto dur_sec = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count() / 1000.0f;
 
-    printf("%llu bytes copied in %.3f seconds\n", FileSize.QuadPart, dur_sec);
-    printf("%.2f MB/sec\n", ((LONGLONG)FileSize.QuadPart/(1024.0*1024.0)) / dur_sec);
-
+	std::cout << FileSize.QuadPart << " bytes copied in bytes copied in " << dur_sec << " seconds" << std::endl;
+	std::cout << ((LONGLONG)FileSize.QuadPart/(1024.0*1024.0)) / dur_sec << " MB/sec" << std::endl;
 
 	create_detached_coroutine(std::bind(&copy_coroutine, IoPort, sourcefilename, destfilename));
 	//exit(0);
