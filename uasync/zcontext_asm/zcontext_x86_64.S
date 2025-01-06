@@ -171,10 +171,13 @@ zcontext_swap: // zcontext_swap(zcontext_t* from, zcontext_t* to, swap_hook_func
     // 返回
     ret
 
+
 .align 16
 .global zcontext_entry_point
 .section .text.zcontext_entry_point, "x"
 zcontext_entry_point:
+    ldmxcsr default_mmx_ctl(%rip)
+    fldcw default_fpu_ctl(%rip)
     pop %rbx
     pop ARG1_REG
     mov %rax, ARG2_REG
@@ -183,6 +186,12 @@ zcontext_entry_point:
     call *%rbx
     call _exit
     hlt
+
+.align 8
+default_mmx_ctl:
+    .int 0x1f80
+default_fpu_ctl:
+    .int 0x37f
 
 #endif
 
@@ -217,3 +226,6 @@ zcontext_swap_preserve_none: // zcontext_swap2(zcontext_t* from, zcontext_t* to,
     pop NONE_PRESERVE_ARG3_REG ; // pop+jump = ret !
 1:
     jmp * NONE_PRESERVE_ARG3_REG // tail call optimization
+
+
+.section .note.GNU-stack,"",%progbits
