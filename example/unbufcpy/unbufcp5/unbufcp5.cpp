@@ -1,4 +1,4 @@
-/*++
+﻿/*++
 THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
 TO THE IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A
@@ -51,7 +51,7 @@ Abstract:
 
 #include <chrono>
 #include <deque>
-
+#include <iostream>
 //
 // Define the size of the buffers used to do the I/O.
 // 64K is a nice number.
@@ -350,12 +350,12 @@ static void copy_coroutine(HANDLE IoPort, std::string sourcefilename, std::strin
 
     auto EndTime = std::chrono::steady_clock::now();
 
-    auto duration = EndTime - StartTime;
-    auto dur_sec = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count() / 1000.0f;
+    auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(EndTime - StartTime).count();
+	double _duration = duration;
+    auto dur_sec = _duration / 1000000000.0;
 
-    printf("%llu bytes copied in %.3f seconds\n", FileSize.QuadPart, dur_sec);
-    printf("%.2f MB/sec\n", ((LONGLONG)FileSize.QuadPart/(1024.0*1024.0)) / dur_sec);
-
+	std::cout << FileSize.QuadPart << " bytes copied in bytes copied in " << dur_sec << " seconds" << std::endl;
+	std::cout << ((LONGLONG)FileSize.QuadPart/(1024.0*1024.0)) / dur_sec << " MB/sec" << std::endl;
 
 	create_detached_coroutine(std::bind(&copy_coroutine, IoPort, sourcefilename, destfilename));
 	//exit(0);
