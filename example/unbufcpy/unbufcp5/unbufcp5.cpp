@@ -1,4 +1,4 @@
-﻿/*++
+/*++
 THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
 TO THE IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A
@@ -80,8 +80,18 @@ struct IOBuffer
 		buf_ptr = malloc(BUFFER_SIZE);
 #endif
 	}
+
+	IOBuffer(const IOBuffer&) = delete;
+
+	IOBuffer(IOBuffer&& rvalue) noexcept
+	{
+		buf_ptr = rvalue.buf_ptr;
+		rvalue.buf_ptr = 0;
+	}
+
 	~IOBuffer()
 	{
+		if (buf_ptr)
 #ifdef _WIN32
 		VirtualFree(buf_ptr, 0, MEM_RELEASE);
 #else
@@ -178,9 +188,9 @@ struct FileCopyer
 
 	void buffer_carrier(HANDLE srcFile, HANDLE destFile, FiberChannel<int>& chan)
 	{
+		IOBuffer buf;
 		for (;;)
 		{
-			IOBuffer buf;
 			FiberOVERLAPPED ov;
 			ov.set_offset(cur_pos);
 			cur_pos += BUFFER_SIZE;
@@ -235,8 +245,8 @@ static void copy_coroutine(HANDLE IoPort, std::string sourcefilename, std::strin
 	//
 
 	HANDLE SourceFile = CreateFileA(sourcefilename.c_str(),
-		GENERIC_READ | GENERIC_WRITE,
-		FILE_SHARE_READ,
+		GENERIC_READ,
+		FILE_SHARE_READ|FILE_SHARE_DELETE,
 		NULL,
 		OPEN_EXISTING,
 		FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED,
@@ -252,7 +262,7 @@ static void copy_coroutine(HANDLE IoPort, std::string sourcefilename, std::strin
 	}
 
 	HANDLE DestFile = CreateFileA(destfilename.c_str(),
-		GENERIC_WRITE,
+		GENERIC_READ|GENERIC_WRITE,
 		FILE_SHARE_READ,
 		NULL,
 		CREATE_ALWAYS,
