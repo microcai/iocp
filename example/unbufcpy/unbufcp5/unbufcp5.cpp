@@ -1,4 +1,4 @@
-﻿/*++
+/*++
 THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
 TO THE IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A
@@ -98,81 +98,6 @@ struct IOBuffer
 		free(buf_ptr);
 #endif
 	}
-};
-
-template<typename T>
-class FiberChannel
-{
-	void wake_up_one_pusher()
-	{
-		if (m_push_awaiting.empty())
-			return;
-		auto top_waiter = m_push_awaiting.front();
-		// wake up .
-		m_push_awaiting.pop_front();
-		PostQueuedCompletionStatus(m_iocp, 0, 
-			(ULONG_PTR)(iocp::overlapped_proc_func) & process_stack_full_overlapped_event
-			, top_waiter);
-	}
-	void wake_up_one_poper()
-	{
-		if (m_pop_awaiting.empty())
-			return;
-		auto top_waiter = m_pop_awaiting.front();
-		// wake up .
-		m_pop_awaiting.pop_front();
-		PostQueuedCompletionStatus(m_iocp, 0,
-			(ULONG_PTR)(iocp::overlapped_proc_func)&process_stack_full_overlapped_event
-			, top_waiter);
-	}
-
-public:
-	T pop()
-	{
-		if (m_queue.empty())
-		{
-			FiberOVERLAPPED ov;
-			// yield
-			m_pop_awaiting.push_back(&ov);
-			get_overlapped_result(ov);
-		}
-		T r = m_queue.front();
-		m_queue.pop_front();
-
-		if (m_queue.size() < m_max_pending)
-		{
-			wake_up_one_pusher();
-		}
-
-		return r;
-	}
-
-	void push(T t)
-	{
-		m_queue.push_back(t);
-		wake_up_one_poper();
-		if (m_queue.size() > m_max_pending)
-		{
-			// sleep until wakeup.
-			FiberOVERLAPPED ov;
-			// yield
-			m_push_awaiting.push_back(&ov);
-			get_overlapped_result(ov);
-		}
-	}
-
-	FiberChannel(HANDLE iocp, long max_pending)
-		: m_max_pending(max_pending)
-		, m_iocp(iocp)
-	{
-	}
-
-	long m_max_pending = 1;
-	std::deque<T> m_queue;
-
-	HANDLE m_iocp;
-	std::deque<FiberOVERLAPPED*> m_pop_awaiting;
-	std::deque<FiberOVERLAPPED*> m_push_awaiting;
 };
 
 struct FileCopyer
