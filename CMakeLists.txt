@@ -12,7 +12,8 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 option(WITHOUT_IOURING "use epoll/poll/kqueue to support IOCP. not io_uring" OFF)
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    add_compile_options(-ffunction-sections)
+    add_compile_options(-ffunction-sections -fdata-sections)
+    add_link_options(-Wl,--gc-sections)
 endif()
 
 if (NOT WIN32)
