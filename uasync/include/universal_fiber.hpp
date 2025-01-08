@@ -75,14 +75,7 @@ using namespace zcontext;
 template<typename T>
 inline static auto move_or_copy(T&& arg)
 {
-	if constexpr (std::is_move_constructible_v<T>)
-	{
-		return static_cast<T&&>(arg);
-	}
-	else
-	{
-		return static_cast<const T&>(arg);
-	}
+	return arg;
 }
 
 template<typename... Args>
