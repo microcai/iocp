@@ -236,7 +236,7 @@ struct response
 
 		auto disconnect_result = DisconnectEx(socket, &ov, 0, 0);
 		ov.last_error = ::WSAGetLastError();
-		if (!(!disconnect_result && ov.last_error != WSA_IO_PENDING))
+		if (!(disconnect_result && ov.last_error != WSA_IO_PENDING))
 			get_overlapped_result(ov);
 		#ifdef _DEBUG
 		printf("file sent successfull...\n");
@@ -343,7 +343,7 @@ public:
 			DWORD accepted_size = 0;
 			auto result = AcceptEx(listen_sock, socket, outputbuffer, 0,sizeof (sockaddr_in6)+16, sizeof (sockaddr_in6)+16, &accepted_size, &ov);
 			ov.last_error = WSAGetLastError();
-			if (!(!result && ov.last_error != WSA_IO_PENDING))
+			if (!(result && ov.last_error != WSA_IO_PENDING))
 				accepted_size = co_await get_overlapped_result(ov);
 
 			if (ov.last_error == WSAECANCELLED || ov.last_error == ERROR_OPERATION_ABORTED || ov.last_error == ERROR_NETNAME_DELETED)

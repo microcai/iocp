@@ -105,18 +105,18 @@ static void echo_sever_client_session(SOCKET client_sock)
 
    DWORD recv_bytes = 0, flag = 0;
 
-   if (WSARecv(client_sock, &wsabuf1, 1, &recv_bytes, &flag, &ov, NULL) == SOCKET_ERROR)
+	auto result = WSARecv(client_sock, &wsabuf1, 1, &recv_bytes, &flag, &ov, NULL);
+	ov.last_error = WSAGetLastError();
+	if (!(result !=0 && ov.last_error != WSA_IO_PENDING))
+		recv_bytes = get_overlapped_result(ov);
+
+   if (ov.last_error)
    {
-      int err = WSAGetLastError();
-      if (err != WSA_IO_PENDING)
-      {
-         printf("*error %d in WSARecv\n", err);
-         closesocket(client_sock);
-         return;
-      }
+      printf("*error %d in WSARecv\n", ov.last_error);
+      closesocket(client_sock);
+      return;
    }
 
-   recv_bytes = get_overlapped_result(ov);
    //printf("* read operation completed\n");
 
    char buf2[1024];

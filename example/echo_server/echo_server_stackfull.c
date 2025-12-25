@@ -180,7 +180,7 @@ static void accept_coroutine(void* param)
 		BOOL result = AcceptEx(listener, client_socket, addr_buf, 0, sizeof (SOCKADDR_IN)+16, sizeof (SOCKADDR_IN)+16, &ignore, &ov.ov);
 		ov.last_error = WSAGetLastError();
 
-		if (!(!result && ov.last_error != WSA_IO_PENDING))
+		if (!(result == TRUE && ov.last_error != WSA_IO_PENDING))
 		{
 			get_overlapped_result(&ov);
 			if (ov.last_error)
