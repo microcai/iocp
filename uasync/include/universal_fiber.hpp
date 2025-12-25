@@ -618,7 +618,8 @@ inline void create_detached_coroutine(Callable callable)
 #	if defined(USE_FCONTEXT)
 
 	auto new_fiber_resume_ctx = make_fcontext(stack_top, stack_size, __coroutine_entry_point<NoRefCallableType>);
-	jump_fcontext(new_fiber_resume_ctx, new_fiber_ctx);
+
+	fcontext_resume_coro(new_fiber_resume_ctx, new_fiber_ctx);
 
 #	elif defined (USE_UCONTEXT)
 
