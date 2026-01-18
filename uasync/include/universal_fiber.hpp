@@ -249,17 +249,11 @@ inline thread_local std::function<void()> __current_yield_ctx_hook = NULL;
 
 #if defined(USE_FCONTEXT)
 
-inline transfer_t on_resume_fcontext(transfer_t caller)
-{
-	__current_yield_fcontext() = caller.fctx;
-	return caller;
-}
-
 // run the "to" coro, and pass arg to it.
 inline void fcontext_resume_coro(fcontext_t const to, void* arg = 0)
 {
 	auto old = __current_yield_fcontext();
-	auto jmp_result = ontop_fcontext(to, arg, on_resume_fcontext);
+	auto jmp_result = jump_fcontext(to, arg);
 	__current_yield_fcontext() = old;
 }
 
@@ -275,7 +269,7 @@ inline transfer_t on_suspend_fcontext(transfer_t caller)
 // transfer control back to main thread. called by coro
 inline void fcontext_suspend_coro(FiberOVERLAPPED& ov)
 {
-	ontop_fcontext(__current_yield_fcontext(), static_cast<void*>(&ov), on_suspend_fcontext);
+	__current_yield_fcontext() = ontop_fcontext(__current_yield_fcontext(), static_cast<void*>(&ov), on_suspend_fcontext).fctx;
 }
 
 #elif  defined (USE_ZCONTEXT)
@@ -619,7 +613,9 @@ inline void create_detached_coroutine(Callable callable)
 
 	auto new_fiber_resume_ctx = make_fcontext(stack_top, stack_size, __coroutine_entry_point<NoRefCallableType>);
 
-	fcontext_resume_coro(new_fiber_resume_ctx, new_fiber_ctx);
+	auto old = __current_yield_fcontext();
+	jump_fcontext(new_fiber_resume_ctx, new_fiber_ctx);
+	__current_yield_fcontext() = old;
 
 #	elif defined (USE_UCONTEXT)
 

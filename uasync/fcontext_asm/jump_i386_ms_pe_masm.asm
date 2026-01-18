@@ -24,7 +24,7 @@
 .model flat, c
 .code
 
-jump_fcontext PROC
+jump_fcontext PROC BOOST_CONTEXT_EXPORT
     ; prepare stack
     lea  esp, [esp-02ch]
 

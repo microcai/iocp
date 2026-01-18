@@ -60,7 +60,7 @@
     AREA |.text|, CODE, READONLY, ALIGN=4, CODEALIGN
     EXPORT ontop_fcontext
 
-ontop_fcontext proc
+ontop_fcontext proc BOOST_CONTEXT_EXPORT
     ; prepare stack for GP + FPU
     sub  sp, sp, #0xd0
 
