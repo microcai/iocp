@@ -23,63 +23,50 @@ jobs:
       #
       # To add more build types (Release, Debug, RelWithDebInfo, etc.) customize the build_type list.
       matrix:
-        os: [ubuntu-24.04, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest, macos-26]
         build_type: [RelWithDebInfo, Debug]
         c_compiler: [gcc, clang, cl]
-        include:
-          - os: windows-latest
-            c_compiler: cl
-            cpp_compiler: cl
-          - os: ubuntu-24.04
-            c_compiler: clang
-            cpp_compiler: clang++
         exclude:
           - os: windows-latest
             c_compiler: gcc
           - os: windows-latest
             c_compiler: clang
-          - os: ubuntu-24.04
+          - os: ubuntu-latest
             c_compiler: cl
           - os: macos-latest
+            c_compiler: cl
+          - os: macos-26
             c_compiler: cl
 
     steps:
     - uses: actions/checkout@v6
 
-    - name: compiler setup on Linux
-      if: startsWith(runner.os, 'Linux')
-      shell: bash
-      run: |
-        echo "CC=${{ matrix.c_compiler }}" >> $GITHUB_ENV
-        echo "CXX=${{ matrix.cpp_compiler }}" >> $GITHUB_ENV
-
-    - name: gcc-14 setup on ubnutu
-      if: startsWith(runner.os, 'Linux') && startsWith(matrix.c_compiler, 'gcc')
-      shell: bash
-      run: |
-        echo "CC=gcc-14" >> $GITHUB_ENV
-        echo "CXX=g++-14" >> $GITHUB_ENV
-
-    - name: gcc-15 setup on Mac OS
-      if: startsWith(runner.os, 'macOS') && startsWith(matrix.c_compiler, 'gcc')
-      shell: bash
-      run: |
-        echo "CC=gcc-15" >> $GITHUB_ENV
-        echo "CXX=g++-15" >> $GITHUB_ENV
-
-    - name: Clang-18 setup on Mac OS
+    - name: Clang setup on Mac OS
       if: startsWith(runner.os, 'macOS') && startsWith(matrix.c_compiler, 'clang')
       shell: bash
       run: |
-        echo "CC=$(brew --prefix llvm@18)/bin/clang" >> $GITHUB_ENV
-        echo "CXX=$(brew --prefix llvm@18)/bin/clang++" >> $GITHUB_ENV
+        if brew list --versions llvm@20 > /dev/null; then
+          echo "CC=$(brew --prefix llvm@20)/bin/clang" >> $GITHUB_ENV
+          echo "CXX=$(brew --prefix llvm@20)/bin/clang++" >> $GITHUB_ENV
+        else
+          echo "CC=$(brew --prefix llvm@18)/bin/clang" >> $GITHUB_ENV
+          echo "CXX=$(brew --prefix llvm@18)/bin/clang++" >> $GITHUB_ENV
+        fi
 
-    - name: GCC setup on Mac OS
-      if: startsWith(runner.os, 'macOS') && startsWith(matrix.c_compiler, 'gcc')
+    - name: GCC setup on Mac OS/Linux
+      if: startsWith(matrix.c_compiler, 'gcc')
       shell: bash
       run: |
-        echo "CC=gcc-14" >> $GITHUB_ENV
-        echo "CXX=g++-14" >> $GITHUB_ENV
+        if gcc-15 -v > /dev/null ; then
+          echo "CC=gcc-15" >> $GITHUB_ENV
+          echo "CXX=g++-15" >> $GITHUB_ENV
+        elif gcc-14 -v > /dev/null ; then
+          echo "CC=gcc-14" >> $GITHUB_ENV
+          echo "CXX=g++-14" >> $GITHUB_ENV
+        else
+          echo "CC=gcc" >> $GITHUB_ENV
+          echo "CXX=g++" >> $GITHUB_ENV
+        fi
 
     - name: Set reusable strings
       # Turn repeated input strings (such as the build output directory) into step outputs. These step outputs can be used throughout the workflow file.
