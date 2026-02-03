@@ -44,9 +44,7 @@ jobs:
             c_compiler: cl
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Install ninja-build tool
-      uses: seanmiddleditch/gha-setup-ninja@v5
+    - uses: actions/checkout@v6
 
     - name: compiler setup on Linux
       if: startsWith(runner.os, 'Linux')
@@ -121,7 +119,7 @@ jobs:
       run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }} -v
 
     - name: Upload generic artifacts
-      uses: actions/upload-artifact@v4.4.0
+      uses: actions/upload-artifact@v6
       with:
         name: test1-${{ runner.os }}-${{ matrix.c_compiler }}-${{ matrix.build_type }}
         path: ${{ github.workspace }}/build/test/test1
