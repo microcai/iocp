@@ -42,8 +42,6 @@ jobs:
             c_compiler: cl
           - os: macos-latest
             c_compiler: cl
-          - os: macos-latest
-            c_compiler: gcc
 
     steps:
     - uses: actions/checkout@v4
@@ -64,12 +62,19 @@ jobs:
         echo "CC=gcc-14" >> $GITHUB_ENV
         echo "CXX=g++-14" >> $GITHUB_ENV
 
+    - name: gcc-15 setup on Mac OS
+      if: startsWith(runner.os, 'macOS') && startsWith(matrix.c_compiler, 'gcc')
+      shell: bash
+      run: |
+        echo "CC=gcc-15" >> $GITHUB_ENV
+        echo "CXX=g++-15" >> $GITHUB_ENV
+
     - name: Clang-18 setup on Mac OS
       if: startsWith(runner.os, 'macOS') && startsWith(matrix.c_compiler, 'clang')
       shell: bash
       run: |
-        echo "CC=$(brew --prefix llvm@15)/bin/clang" >> $GITHUB_ENV
-        echo "CXX=$(brew --prefix llvm@15)/bin/clang++" >> $GITHUB_ENV
+        echo "CC=$(brew --prefix llvm@18)/bin/clang" >> $GITHUB_ENV
+        echo "CXX=$(brew --prefix llvm@18)/bin/clang++" >> $GITHUB_ENV
 
     - name: GCC setup on Mac OS
       if: startsWith(runner.os, 'macOS') && startsWith(matrix.c_compiler, 'gcc')
