@@ -321,7 +321,7 @@ void CopyLoop(ULARGE_INTEGER FileSize)
     BOOL Success;
     DWORD NumberBytes;
     LPOVERLAPPED CompletedOverlapped;
-    DWORD_PTR Key;
+    ULONG Key;
     PCOPY_CHUNK Chunk;
     int PendingIO = 0;
     int i;
